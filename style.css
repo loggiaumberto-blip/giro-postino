@@ -20,6 +20,10 @@
 html { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
 /* schermata della tappa: sta tutta nello schermo, la pagina non scorre */
 html.fisso, html.fisso body { overflow: hidden; height: 100%; }
+html.fisso body { position: fixed; inset: 0; width: 100%; }
+/* niente zoom col dito e niente scorrimento laterale; sulla tappa il dito non sposta niente (i tocchi funzionano) */
+html, body { overflow-x: hidden; touch-action: pan-y; }
+#app.vista-tappa, #mappa .m-su, #m-scheda { touch-action: none; }
 body {
   margin: 0; background: var(--sfondo); color: var(--testo);
   font: 17px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
