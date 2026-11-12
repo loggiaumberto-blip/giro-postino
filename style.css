@@ -16,7 +16,10 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html { -webkit-text-size-adjust: 100%; }
+/* niente "elastico" né "trascina per ricaricare": Chrome lo legge solo su html */
+html { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+/* schermata della tappa: sta tutta nello schermo, la pagina non scorre */
+html.fisso, html.fisso body { overflow: hidden; height: 100%; }
 body {
   margin: 0; background: var(--sfondo); color: var(--testo);
   font: 17px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -137,7 +140,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; text-align: i
 
 /* ---------- fogli che salgono dal basso ---------- */
 .velo-nero { position: fixed; inset: 0; background: rgba(30,37,48,.45); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
-.foglio { width: 100%; max-width: 560px; max-height: 94dvh; overflow-y: auto; background: #F6F9FC; border-radius: 22px 22px 0 0;
+.foglio { width: 100%; max-width: 560px; max-height: 94dvh; overflow-y: auto; overscroll-behavior: contain; background: #F6F9FC; border-radius: 22px 22px 0 0;
   padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
 .foglio h2 { margin: 0; font-size: 22px; color: var(--tono); }
 .foglio p { margin: 0; }

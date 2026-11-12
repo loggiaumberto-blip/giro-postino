@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.3';
+const VERSIONE_APP = '1.3.1';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -171,6 +171,7 @@ function disegna() {
   const conMappa = !!S.giro && v.s === 'mappa';
   $app.hidden = conMappa;
   $app.classList.toggle('vista-tappa', !!S.giro && v.s === 'tappa');
+  document.documentElement.classList.toggle('fisso', conMappa || (!!S.giro && v.s === 'tappa'));
   if (conMappa) mostraMappa(nuova); else nascondiMappa();
   const y = window.scrollY;
   $app.innerHTML = h;
