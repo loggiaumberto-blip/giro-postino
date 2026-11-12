@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.2';
+const VERSIONE_APP = '1.3';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -165,6 +165,7 @@ function disegna() {
   else if (v.s === 'cerca') h = pagCerca();
   else if (v.s === 'tappe') h = pagTappe();
   else if (v.s === 'riepilogo') h = pagRiepilogo();
+  else if (v.s === 'mazzo') h = pagMazzo();
   else if (v.s === 'mappa') h = '';
   else h = pagTappa(nuova);
   const conMappa = !!S.giro && v.s === 'mappa';
@@ -386,6 +387,124 @@ function pagRiepilogo() {
   return h;
 }
 
+/* ================= ordine del mazzo =================
+   Il mazzo arriva nell'ordine del blocco: N 1 in cima, l'ultima in fondo.
+   Qui si calcola come trasformarlo nell'ordine del giro attuale:
+   1) si divide in pezzi (gruppi di N vicini), 2) qualche pezzo va al contrario,
+   3) dentro ogni pezzo poche buste si spostano, 4) si rimettono insieme i pezzi. */
+const SALTO = 8;   // un salto di più di 8 numeri tra due buste di seguito = pezzo nuovo
+function calcolaMazzo() {
+  const T = [];
+  S.ordine.forEach((ti, g) => tappe[ti].buste.map(b => b.n).sort((a, b) => a - b).forEach(n => T.push({n: n, g: g})));
+  let pezzi = [];
+  T.forEach((x, k) => { if (!k || Math.abs(x.n - T[k - 1].n) > SALTO) pezzi.push([]); pezzi[pezzi.length - 1].push(x); });
+  const ns = p => p.map(x => x.n), mn = p => Math.min.apply(null, ns(p)), mx = p => Math.max.apply(null, ns(p));
+  const verso = p => {
+    if (p.length < 2) return 0;
+    let s = 0;
+    for (let k = 1; k < p.length; k++) { const d = p[k].n - p[k - 1].n; if (Math.abs(d) <= SALTO) s += Math.sign(d); }
+    return s < 0 ? -1 : 1;
+  };
+  const tutti = tuttiN(), dopoN = v => tutti.find(m => m > v);
+  // si uniscono i pezzi spezzati per niente: una busta fuori posto, o due pezzi che continuano uno nell'altro
+  for (let giro = 0, cambiato = true; cambiato && giro < 500; giro++) {
+    cambiato = false;
+    for (let i = 0; i < pezzi.length && !cambiato; i++) {
+      const p = pezzi[i], a = pezzi[i - 1], b = pezzi[i + 1];
+      const dentro = q => q && ns(p).every(v => v > mn(q) && v < mx(q));
+      if (p.length <= 3 && dentro(a)) { a.push.apply(a, p); pezzi.splice(i, 1); cambiato = true; }
+      else if (p.length <= 3 && dentro(b)) { b.unshift.apply(b, p); pezzi.splice(i, 1); cambiato = true; }
+      else if (b) {
+        const va = verso(p), vb = verso(b), v = va || vb || 1;
+        if ((va === vb || !va || !vb) && ((v > 0 && dopoN(mx(p)) === mn(b)) || (v < 0 && dopoN(mx(b)) === mn(p)))) {
+          p.push.apply(p, b); pezzi.splice(i + 1, 1); cambiato = true;
+        }
+      }
+    }
+  }
+  return pezzi.map((p, i) => {
+    const d = verso(p) || 1;
+    // dentro la stessa tappa le buste vanno nel verso del pezzo (sono nello stesso palazzo)
+    const el = [];
+    for (let k = 0; k < p.length;) {
+      let j = k; while (j < p.length && p[j].g === p[k].g) j++;
+      el.push.apply(el, p.slice(k, j).map(x => x.n).sort((a, b) => d * (a - b)));
+      k = j;
+    }
+    // gruppi di numeri di seguito (nel verso del pezzo)
+    const un = [];
+    el.forEach(n => { const u = un[un.length - 1]; if (u && n === u[u.length - 1] + d) u.push(n); else un.push([n]); });
+    // i gruppi che restano fermi: la sequenza crescente più lunga (contando le buste)
+    const key = u => d * u[0], best = [], da = [];
+    un.forEach((u, a) => {
+      best[a] = u.length; da[a] = -1;
+      for (let b = 0; b < a; b++) if (key(un[b]) < key(u) && best[b] + u.length > best[a]) { best[a] = best[b] + u.length; da[a] = b; }
+    });
+    let fine = 0; best.forEach((v, a) => { if (v > best[fine]) fine = a; });
+    const fermo = {}; for (let a = fine; a >= 0; a = da[a]) fermo[a] = 1;
+    const mosse = [];
+    for (let a = 0; a < un.length;) {
+      if (fermo[a]) { a++; continue; }
+      let b = a; while (b < un.length && !fermo[b]) b++;
+      mosse.push({unita: un.slice(a, b), dopo: a > 0 ? un[a - 1][un[a - 1].length - 1] : null, prima: b < un.length ? un[b][0] : null});
+      a = b;
+    }
+    return {i: i, d: d, el: el, un: un, mosse: mosse, min: mn(p), max: mx(p), set: ns(p).sort((a, b) => a - b)};
+  });
+}
+function intervalli(lista) {   // [1,2,3,5] -> "1–3, 5"
+  const r = [];
+  lista.forEach(n => { const u = r[r.length - 1]; if (u && n === u[1] + 1) u[1] = n; else r.push([n, n]); });
+  return r.map(u => u[0] === u[1] ? u[0] : u[0] + '–' + u[1]).join(', ');
+}
+const testoUnita = u => u.length === 1 ? String(u[0]) : u.length === 2 ? u[0] + ' e ' + u[1] : u[0] + '–' + u[u.length - 1];
+function chipPezzo(p) { return '<span class="mz-chip" style="--c:' + COL_TRATTI[p.i % COL_TRATTI.length] + '">Pezzo ' + (p.i + 1) + '</span>'; }
+function rigaSpunta(k, html) {
+  const ok = !!(S.spunte || {})[k];
+  return '<button class="mz-riga' + (ok ? ' ok' : '') + '" data-a="spunta" data-k="' + esc(k) + '"><span class="mz-v" aria-hidden="true">' + (ok ? '✓' : '') + '</span><span class="mz-t">' + html + '</span></button>';
+}
+function pagMazzo() {
+  const P = calcolaMazzo(), tot = tuttiN().length;
+  const ultimo = tuttiN()[tot - 1];
+  let h = barraIndietro('Ordine del mazzo');
+  h += '<p class="mz-intro">Il mazzo arriva come il blocco: <b>N 1 in cima</b>, <b>N ' + ultimo + ' in fondo</b>. Ecco cosa cambiare per averlo nell\'ordine del giro' +
+    (S.rimandate.length ? ' <b>di adesso</b> (con le tappe rimandate)' : '') + '.</p>';
+  const mosse = P.reduce((s, p) => s + p.mosse.length, 0), rovesci = P.filter(p => p.d < 0);
+  if (P.length === 1 && !mosse && P[0].d > 0) return h + '<p class="ok">✅ Il mazzo è già nell\'ordine del giro: non serve cambiare niente.</p>';
+  let passo = 0;
+  const titolo = t => '<h3 class="mz-h"><span class="mz-num">' + (++passo) + '</span>' + t + '</h3>';
+  if (P.length > 1) {
+    h += '<section class="mz-passo">' + titolo('Dividi il mazzo in ' + P.length + ' pezzi') +
+      '<p class="mz-sotto">Dall\'alto del mazzo:</p>' +
+      P.slice().sort((a, b) => a.min - b.min).map(p => rigaSpunta('div' + p.i, chipPezzo(p) + ' <b>N ' + intervalli(p.set) + '</b>' +
+        (p.set.length === 1 ? ' <small>(una busta sola: sfilala)</small>' : ''))).join('') + '</section>';
+  }
+  if (rovesci.length) {
+    h += '<section class="mz-passo">' + titolo(rovesci.length === 1 && P.length > 1 ? 'Un pezzo va al contrario' : (P.length > 1 ? 'Alcuni pezzi vanno al contrario' : 'Il mazzo va al contrario')) +
+      rovesci.map(p => rigaSpunta('rov' + p.i, (P.length > 1 ? chipPezzo(p) + ' ' : '') + '<b>N ' + p.min + ' → ' + p.max + '</b><br>' +
+        '<small>Passa le buste una alla volta su un mucchietto nuovo, partendo dalla N ' + p.min + ' che è in cima. Alla fine in cima c\'è la <b>N ' + p.max + '</b>.</small>')).join('') + '</section>';
+  }
+  if (mosse) {
+    h += '<section class="mz-passo">' + titolo('Piccoli spostamenti (' + mosse + ')') +
+      '<p class="mz-sotto">Falli in quest\'ordine, dall\'alto in basso. Tocca una riga quando l\'hai fatta.</p>' +
+      P.filter(p => p.mosse.length).map(p => (P.length > 1 ? '<div class="mz-dentro">Dentro il ' + chipPezzo(p) + '</div>' : '') +
+        p.mosse.map(m => {
+          const piu = m.unita.length > 1 || m.unita[0].length > 1;
+          const chi = '<b class="mz-n">N ' + m.unita.map(testoUnita).join(', ') + '</b>';
+          const dove = m.dopo != null ? 'subito dopo la <b>N ' + m.dopo + '</b>' : 'in cima' + (P.length > 1 ? ' al pezzo' : ' al mazzo') + ', prima della <b>N ' + m.prima + '</b>';
+          return rigaSpunta('m' + p.i + ':' + m.unita[0][0], chi + ' → ' + (piu ? 'mettile' + (m.unita.length > 1 ? ', in quest\'ordine,' : '') : 'mettila') + ' ' + dove);
+        }).join('')).join('') + '</section>';
+  }
+  if (P.length > 1) {
+    h += '<section class="mz-passo">' + titolo('Rimetti insieme i pezzi') + '<p class="mz-sotto">Dall\'alto:</p>' +
+      rigaSpunta('unisci', P.map(p => '<span class="mz-ord">' + chipPezzo(p) + ' N ' + (p.d > 0 ? p.min + '–' + p.max : p.max + '–' + p.min + ' al contrario') + '</span>').join('')) + '</section>';
+  }
+  h += '<section class="mz-passo">' + titolo('Controllo: l\'ordine finale') + '<p class="mz-sotto">Dall\'alto. Il puntino • segna dove l\'ordine del blocco cambia.</p>' +
+    P.map(p => '<div class="mz-seq">' + (P.length > 1 ? chipPezzo(p) + ' ' : '') + p.un.map(u => u.length === 1 ? u[0] : u[0] + '–' + u[u.length - 1]).join(' <i>•</i> ') + '</div>').join('') + '</section>';
+  if (Object.keys(S.spunte || {}).length) h += '<button class="neutro" data-a="mazzo-azzera">↺ Togli tutte le spunte</button>';
+  return h;
+}
+
 /* ================= fogli e schermo gigante ================= */
 function apriFoglio(f) { foglio = f; disegnaSopra(true); }
 function chiudiFoglio() { foglio = null; disegnaSopra(); }
@@ -428,6 +547,7 @@ function corpoFoglio(f) {
   if (f.tipo === 'menu') return '<h2>Menu</h2>' +
     '<button class="neutro" data-a="mappa">🗺 Mappa del giro</button>' +
     '<button class="neutro" data-a="tappe">Tutte le tappe</button>' +
+    '<button class="neutro" data-a="mazzo">📦 Ordine del mazzo</button>' +
     '<button class="neutro" data-a="riepilogo">Riepilogo ed esporta</button>' +
     '<button class="neutro" data-a="carica">Carica un altro giro</button>' +
     '<button class="neutro" data-a="anim">Animazioni: ' + (S.anim !== false ? 'sì' : 'no') + '</button>' +
@@ -921,6 +1041,9 @@ const AZIONI = {
   cerca() { apri({s: 'cerca', q: ''}); },
   tappe() { foglio = null; apri({s: 'tappe'}); },
   riepilogo() { foglio = null; apri({s: 'riepilogo'}); },
+  mazzo() { foglio = null; apri({s: 'mazzo'}); },
+  spunta(el) { S.spunte = S.spunte || {}; const k = el.dataset.k; if (S.spunte[k]) delete S.spunte[k]; else S.spunte[k] = 1; salva(); disegna(); },
+  'mazzo-azzera'() { S.spunte = {}; salva(); disegna(); },
   anim() { S.anim = S.anim === false; salva(); document.body.classList.toggle('anim', animOn()); disegnaSopra(); },
   prec() { if (S.pos > 0) { S.pos--; salva(); disegna(); } },
   succ() {
@@ -1096,5 +1219,5 @@ avviaSW();
 prendiCondiviso();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-window.giroPostino = {caricaTesto: caricaTesto, giornoRitiro: (d, n) => iso(giornoRitiro(d, n == null ? 2 : n))};
+window.giroPostino = {caricaTesto: caricaTesto, giornoRitiro: (d, n) => iso(giornoRitiro(d, n == null ? 2 : n)), mazzo: calcolaMazzo};
 })();

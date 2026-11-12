@@ -225,7 +225,7 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 #mappa { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; background: var(--sfondo);
   max-width: 560px; margin: 0 auto; }
 #mappa .m-su { padding: 10px 12px 8px; }
-.m-corpo { position: relative; flex: 1; min-height: 0; }
+.m-corpo { position: relative; flex: 1; min-height: 0; isolation: isolate; }
 #m-carta { position: absolute; inset: 0; background: #E6ECF2; }
 #m-carta.leaflet-container { background: #E6ECF2; font: inherit; }
 .m-errore { margin: 0; padding: 24px 16px; text-align: center; color: var(--testo2); }
@@ -292,7 +292,9 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
   font-size: 21px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; }
 .nchip.e-da_segnare { border-style: dashed; color: var(--grigio); }
 .ok-chip { display: inline-block; padding: 3px 10px; border-radius: 99px; background: var(--verde-v); color: var(--verde); font-weight: 800; font-size: 15px; }
-.t-mappa { position: relative; flex: 1 1 auto; min-height: 200px; border-radius: 18px; overflow: hidden; background: #E6ECF2; border: 1px solid var(--bordo); }
+/* isolation: i livelli interni della mappa (z-index 400–1000) restano chiusi qui dentro
+   e non passano sopra il menu, i fogli e le scritte in alto */
+.t-mappa { isolation: isolate; position: relative; flex: 1 1 auto; min-height: 200px; border-radius: 18px; overflow: hidden; background: #E6ECF2; border: 1px solid var(--bordo); }
 .t-mappa #m-carta { position: absolute; inset: 0; }
 .t-tocca { position: absolute; inset: 0; z-index: 900; width: 100%; height: 100%; }
 .t-mappa .ingrandisci { position: absolute; left: 10px; bottom: 10px; z-index: 901; padding: 5px 10px; border-radius: 99px; pointer-events: none;
@@ -311,6 +313,30 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .pann .icone .cresce { flex: 1; }
 .mazzo-m { text-align: center; font-size: 14px; color: var(--tono); }
 .mazzo-m.nuovo { background: rgba(255,255,255,.8); border: 1px dashed var(--accento); border-radius: 10px; padding: 4px 8px; font-size: 15px; }
+
+/* ---------- ordine del mazzo ---------- */
+.mz-intro { margin: 0 2px; font-size: 17px; }
+.mz-passo { background: var(--scheda); border: 1.5px solid var(--bordo); border-radius: 16px; padding: 10px 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.mz-h { display: flex; align-items: center; gap: 10px; margin: 0 0 2px; font-size: 19px; }
+.mz-num { flex: 0 0 30px; height: 30px; border-radius: 50%; background: var(--tono); color: #fff; font-size: 16px;
+  display: flex; align-items: center; justify-content: center; }
+.mz-sotto { margin: 0 2px; font-size: 15px; color: var(--testo2); }
+.mz-riga { display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 52px; padding: 8px 10px; border-radius: 12px;
+  background: rgba(255,255,255,.75); border: 1px solid var(--bordo); font-size: 17px; line-height: 1.35; }
+.mz-riga:active { background: #fff; }
+.mz-riga small { font-size: 15px; color: var(--testo2); }
+.mz-v { flex: 0 0 28px; height: 28px; border-radius: 50%; border: 2px solid var(--accento); color: #fff; font-weight: 900;
+  display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.mz-t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mz-riga.ok { background: var(--verde-v); border-color: rgba(14,138,69,.35); }
+.mz-riga.ok .mz-v { background: var(--verde); border-color: var(--verde); }
+.mz-riga.ok .mz-t { color: var(--testo2); }
+.mz-n { font-size: 20px; color: var(--tono); }
+.mz-chip { display: inline-block; padding: 1px 9px; border-radius: 99px; background: var(--c); color: #fff; font-weight: 800; font-size: 14px; vertical-align: 1px; }
+.mz-dentro { margin: 6px 2px 0; font-size: 15px; font-weight: 700; color: var(--tono); }
+.mz-ord { display: block; padding: 2px 0; }
+.mz-seq { font-size: 17px; font-weight: 700; color: var(--tono); line-height: 1.6; font-variant-numeric: tabular-nums; }
+.mz-seq i { color: var(--ambra-s); font-style: normal; }
 
 /* ---------- Scrivania: blocco, busta e avviso disegnati ---------- */
 /* Carattere "a mano" Kalam (Google Fonts, licenza SIL OFL), salvato dentro l'app per l'uso offline */
