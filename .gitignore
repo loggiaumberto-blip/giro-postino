@@ -1,0 +1,8 @@
+# PRIVACY: online va solo il codice. Mai nomi o indirizzi dei destinatari.
+*.json
+giro_*
+riepilogo_*
+lista_*
+*.jpeg
+*.jpg
+*.md
