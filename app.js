@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.1';
+const VERSIONE_APP = '1.2';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -131,6 +131,8 @@ function indirizzoBusta(n) {
 
 /* ================= navigazione ================= */
 const vista = () => (S.pila && S.pila.length) ? S.pila[S.pila.length - 1] : {s: 'tappa'};
+// uscendo dalle lettere del palazzo (tappa dopo, salta, posticipa) si torna alla schermata con indirizzo e mappa
+function lasciaPalazzo() { while (S.pila && S.pila.length && S.pila[S.pila.length - 1].s === 'palazzo') S.pila.pop(); }
 function apri(v) { S.pila.push(v); salva(); disegna(); }
 function indietro() {
   if (occupato) return true;
@@ -150,25 +152,28 @@ window.addEventListener('popstate', () => {
 /* ================= disegno ================= */
 function disegna() {
   document.body.classList.toggle('anim', animOn());
+  riportaCarta();   // la mappa torna al suo posto prima di ridisegnare la pagina
   let h, chiave;
-  if (!S.giro) { h = pagInizio(); chiave = 'inizio'; }
-  else {
-    const v = vista();
-    chiave = v.s + ':' + (v.n || '') + ':' + (v.s === 'tappa' ? S.pos : '');
-    if (v.s === 'busta') h = pagBusta(v.n);
-    else if (v.s === 'dasegnare') h = pagDaSegnare();
-    else if (v.s === 'cerca') h = pagCerca();
-    else if (v.s === 'tappe') h = pagTappe();
-    else if (v.s === 'riepilogo') h = pagRiepilogo();
-    else if (v.s === 'mappa') h = '';
-    else h = pagTappa();
-  }
+  const v = vista();
+  if (!S.giro) chiave = 'inizio';
+  else chiave = v.s + ':' + (v.n || '') + ':' + (v.s === 'tappa' || v.s === 'palazzo' ? S.pos : '');
   const nuova = chiave !== ultimaVista;
-  const conMappa = !!S.giro && vista().s === 'mappa';
+  if (!S.giro) h = pagInizio();
+  else if (v.s === 'busta') h = pagBusta(v.n);
+  else if (v.s === 'palazzo') h = pagPalazzo();
+  else if (v.s === 'dasegnare') h = pagDaSegnare();
+  else if (v.s === 'cerca') h = pagCerca();
+  else if (v.s === 'tappe') h = pagTappe();
+  else if (v.s === 'riepilogo') h = pagRiepilogo();
+  else if (v.s === 'mappa') h = '';
+  else h = pagTappa(nuova);
+  const conMappa = !!S.giro && v.s === 'mappa';
   $app.hidden = conMappa;
+  $app.classList.toggle('vista-tappa', !!S.giro && v.s === 'tappa');
   if (conMappa) mostraMappa(nuova); else nascondiMappa();
   const y = window.scrollY;
   $app.innerHTML = h;
+  if (S.giro && v.s === 'tappa') mostraMini();
   if (nuova) window.scrollTo(0, 0);
   else window.scrollTo(0, y);
   ultimaVista = chiave;
@@ -178,14 +183,6 @@ function disegna() {
   if (dopo) { const f = dopo; dopo = null; f(); }
 }
 
-function barraSu() {
-  const k = daSegnare().length;
-  return '<div class="barra">' +
-    '<button class="neutro conta cresce' + (k ? ' ha' : '') + '" data-a="dasegnare">⏳ Da segnare <b id="conta">' + k + '</b></button>' +
-    '<button class="neutro" data-a="cerca" aria-label="Cerca">🔍</button>' +
-    '<button class="neutro" data-a="mappa" aria-label="Mappa">🗺</button>' +
-    '<button class="neutro" data-a="menu" aria-label="Menu">☰</button></div>';
-}
 function barraIndietro(titolo) {
   return '<div class="barra"><button class="neutro" data-a="indietro">‹ Indietro</button><div class="titolo-pag">' + esc(titolo) + '</div></div>';
 }
@@ -211,37 +208,51 @@ function pagInizio() {
     '<p>Oppure tocca “Carica giro” e scegli il file <b>giro_….json</b>.</p></div>';
 }
 
-function pagTappa() {
+function viaCivico(t) {
+  if (t.via && t.civico) return {via: t.via, civ: String(t.civico)};
+  const s = String(t.indirizzo || ''), i = s.lastIndexOf(',');
+  return i < 0 ? {via: s, civ: ''} : {via: s.slice(0, i), civ: s.slice(i + 1).trim()};
+}
+/* Schermata della tappa: indirizzo grande, lettere con i numeri del blocco, mappa, pannello piccolo in basso.
+   Toccando l'indirizzo si aprono le lettere del palazzo; toccando la mappa si apre a tutto schermo. */
+function pagTappa(nuova) {
   const t = tappaQui(), tot = tuttiN().length, fatte = tuttiN().filter(fatta).length;
-  const zona = S.giro.zone[t.zi] || {};
   const tr = trattoDi(t.ti), nTr = (S.giro.tratti || []).length;
-  const rim = S.rimandate.indexOf(t.ti) >= 0;
-  const ultima = S.pos === S.ordine.length - 1;
-  let h = barraSu();
-  h += '<section class="testa"><div class="nav">' +
+  const rim = S.rimandate.indexOf(t.ti) >= 0, q = t.buste.length, vc = viaCivico(t), k = daSegnare().length;
+  const vicina = S.pos > 0 && S.ordine[S.pos - 1] === t.ti - 1 && t.metri_dalla_precedente >= 30;
+  const nuovoPezzo = !rim && tr >= 0 && nTr > 1 && (S.pos === 0 || trattoDi(S.ordine[S.pos - 1]) !== tr);
+  let h = '<button class="indir' + (nuova ? ' entra' : '') + '" data-a="palazzo">' +
+    '<span class="nomevia">' + esc(vc.via) + '</span>' + (vc.civ ? '<span class="civ">' + esc(vc.civ) + '</span>' : '') +
+    '<span class="lett"><span class="q">' + (q === 1 ? '1 lettera' : q + ' lettere') + '</span>' +
+    t.buste.map(b => { const e = esitoDi(b.n); return '<span class="nchip' + (e ? ' e-' + e : '') + '">' + b.n + '</span>'; }).join('') +
+    (tappaFinita(t.ti) ? '<span class="ok-chip">✓ fatta</span>' : (rim ? '<span class="etichetta">↪ rimandata</span>' : '')) + '</span>' +
+    '<span class="vai" aria-hidden="true">›</span></button>';
+  h += '<div class="t-mappa" id="posto-mappa"><button class="t-tocca" data-a="mappa" aria-label="Apri la mappa a tutto schermo"></button>' +
+    '<span class="ingrandisci">⤢ tocca per ingrandire</span></div>';
+  h += '<section class="pann"><div class="nav">' +
     '<button class="freccia" data-a="prec" aria-label="Tappa precedente"' + (S.pos === 0 ? ' disabled' : '') + '>‹</button>' +
-    '<button class="quale" data-a="tappe">Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length + '<small>tocca per vederle tutte</small></button>' +
+    '<button class="quale" data-a="tappe">Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length +
+      '<small>' + fatte + ' di ' + tot + ' buste fatte' + (vicina ? ' · a ' + Math.round(t.metri_dalla_precedente / 10) * 10 + ' m' : '') + '</small></button>' +
     '<button class="freccia" data-a="succ" aria-label="Tappa successiva">›</button></div>' +
     '<div class="avanz"><i id="barra" style="transform:scaleX(' + (tot ? fatte / tot : 0) + ')"></i></div>' +
-    '<div class="info"><span><b>' + fatte + '</b> di ' + tot + ' buste fatte</span>' +
-    (tr >= 0 ? '<span>Tratto ' + (tr + 1) + (nTr > 1 ? ' di ' + nTr : '') + ' · ' + esc(testoTratto(tr)) + '</span>' : '') +
-    (zona.parcheggio ? '<span>🛵 ' + esc(zona.parcheggio.vicino_a) + '</span>' : '') +
-    '</div></section>';
+    (tr >= 0 && nTr > 1 ? '<div class="mazzo-m' + (nuovoPezzo ? ' nuovo' : '') + '">📦 ' +
+      (nuovoPezzo ? (S.pos === 0 ? 'Primo' : 'Nuovo') + ' pezzo di mazzo: ' : 'Pezzo di mazzo ') + '<b>' + esc(testoTratto(tr)) + '</b></div>' : '') +
+    '<div class="icone"><button class="neutro conta cresce' + (k ? ' ha' : '') + '" data-a="dasegnare">⏳ Da segnare <b id="conta">' + k + '</b></button>' +
+    '<button class="neutro" data-a="cerca" aria-label="Cerca">🔍</button>' +
+    '<button class="neutro" data-a="menu" aria-label="Menu">☰</button></div></section>';
+  return h;
+}
 
-  if (rim) h += '<div><span class="etichetta">↪ rimandata</span></div>';
-  else if (tr >= 0 && nTr > 1 && (S.pos === 0 || trattoDi(S.ordine[S.pos - 1]) !== tr)) {
-    const x = S.giro.tratti[tr];
-    h += '<div class="mazzo">📦 ' + (S.pos === 0 ? 'Primo' : 'Nuovo') + ' pezzo di mazzo: <b>N ' + x.da + '–' + x.a + '</b>' +
-      (x.verso === 'indietro' ? '<br>all\'indietro: dalla <b>N ' + x.a + '</b> verso la N ' + x.da : '') + '</div>';
-  }
-  const q = t.buste.length;
-  const vicina = S.pos > 0 && S.ordine[S.pos - 1] === t.ti - 1 && t.metri_dalla_precedente >= 30;
+/* Le lettere del palazzo (come prima la schermata della tappa) */
+function pagPalazzo() {
+  const t = tappaQui(), q = t.buste.length;
+  const ultima = S.pos === S.ordine.length - 1;
+  let h = barraIndietro('Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length);
+  if (S.rimandate.indexOf(t.ti) >= 0 && !tappaFinita(t.ti)) h += '<div><span class="etichetta">↪ rimandata</span></div>';
   h += '<h1 class="indirizzo">' + esc(t.indirizzo) + '</h1>' +
-    '<div class="quante">' + (q === 1 ? '1 lettera qui' : q + ' lettere qui') +
-    (vicina ? '<small>a circa ' + Math.round(t.metri_dalla_precedente / 10) * 10 + ' m dalla tappa prima</small>' : '') + '</div>';
+    '<div class="quante">' + (q === 1 ? '1 lettera qui' : q + ' lettere qui') + '</div>';
   h += '<div class="lista">' + t.buste.map(b => rigaBusta(b.n)).join('') + '</div>';
   if (t.nota) h += '<div class="nota-box">📝 ' + esc(t.nota) + '</div>';
-
   h += '<div class="fondo">';
   if (tappaGestita(t.ti)) {
     h += '<div class="finita" id="finita"><div class="scritta">' +
@@ -380,7 +391,8 @@ function apriFoglio(f) { foglio = f; disegnaSopra(true); }
 function chiudiFoglio() { foglio = null; disegnaSopra(); }
 function disegnaSopra(nuovo) {
   let h = '';
-  if (foglio) h += '<div class="velo-nero" data-a="velo"><div class="foglio"' + (nuovo ? '' : ' style="animation:none"') + '>' + corpoFoglio(foglio) + '</div></div>';
+  if (foglio) h += '<div class="velo-nero" data-a="velo"><div class="foglio' + (SCRIVANIA[foglio.tipo] ? ' scr' + (nuovo ? ' scrivi' : '') : '') + '"' +
+    (nuovo ? '' : ' style="animation:none"') + '>' + corpoFoglio(foglio) + '</div></div>';
   if (gigante != null) {
     const d = perN[gigante].b.destinatario, i = d.indexOf(' ');
     const cogn = i < 0 ? d : d.slice(0, i), resto = i < 0 ? '' : d.slice(i + 1);
@@ -398,19 +410,7 @@ function disegnaSopra(nuovo) {
 function corpoFoglio(f) {
   const b = f.n != null ? perN[f.n].b : null;
   const chi = b ? '<p><b>N ' + f.n + '</b> · ' + esc(b.destinatario) + '</p>' : '';
-  if (f.tipo === 'terzi') return '<h2>Ritira un\'altra persona</h2>' + chi +
-    '<div class="ricorda terzi">✍ Fai firmare e <b>scrivi il cognome accanto alla firma</b>.</div>' +
-    '<label for="cognome">Cognome di chi ritira</label>' +
-    '<input class="campo maiusc" id="cognome" data-fuoco type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="done" value="' + esc(rec(f.n).ritirato_da || '') + '">' +
-    '<p class="errore" id="err" hidden>Scrivi il cognome di chi ritira.</p>' +
-    '<button class="esito terzi" data-a="ok-terzi">Fatto</button><button class="neutro" data-a="chiudifoglio">Annulla</button>';
-  if (f.tipo === 'avviso') return '<h2>Avviso di giacenza</h2>' +
-    '<div class="ricorda avviso">✍ Scrivi <b>AVVISO</b> sul blocco e sulla busta.<br>La busta <b>torna in borsa</b>.</div>' +
-    '<p>Da copiare sull\'avviso:</p>' + riquadroAvviso(f.n, f.ora, f.data, true, f.tardi) +
-    '<button class="esito avviso" data-a="ok-avviso">Fatto, avviso lasciato</button><button class="neutro" data-a="chiudifoglio">Annulla</button>';
-  if (f.tipo === 'sconosciuto') return '<h2>Sconosciuto</h2>' + chi +
-    '<div class="ricorda sconosciuto">✍ Scrivi <b>SCONOSCIUTO</b> sul blocco e sulla busta.</div>' +
-    '<button class="esito sconosciuto" data-a="ok-sconosciuto">Fatto</button><button class="neutro" data-a="chiudifoglio">Annulla</button>';
+  if (SCRIVANIA[f.tipo]) return scrivania(f);
   if (f.tipo === 'nota') return '<h2>Nota sulla busta</h2>' + chi +
     '<textarea class="campo" id="nota" data-fuoco placeholder="es. lasciata alla vicina del 2° piano">' + esc(rec(f.n).nota || '') + '</textarea>' +
     '<button class="pieno" data-a="ok-nota">Salva nota</button><button class="neutro" data-a="chiudifoglio">Annulla</button>';
@@ -439,6 +439,93 @@ function corpoFoglio(f) {
     '<button class="neutro" data-a="chiudifoglio">' + esc(f.no || 'Annulla') + '</button>';
 }
 
+/* ================= Scrivania: i fogli disegnati =================
+   Per "a terzi", "avviso" e "sconosciuto" si vedono il blocco, la busta e l'avviso
+   disegnati, con sopra già scritto a mano quello che va scritto. */
+const SCRIVANIA = {terzi: 1, avviso: 1, sconosciuto: 1};
+const FIRMA = '<svg class="firma-svg" viewBox="0 0 90 30" aria-label="firma"><path d="M3 22 C 10 4, 16 4, 14 20 S 24 26, 28 12 S 36 6, 38 18 S 48 24, 52 10 C 54 4, 58 6, 56 16 S 66 24, 72 14 S 82 10, 88 16" fill="none" stroke="#1F3C9C" stroke-width="2.4" stroke-linecap="round"/></svg>';
+const CROCE = '<svg class="x" viewBox="0 0 20 20"><path d="M3 4 L17 17 M16 3 L4 16" stroke="#1F3C9C" stroke-width="2.8" stroke-linecap="round" fill="none"/></svg>';
+let cognomeTerzi = '';
+// scritta a mano che compare (d = ritardo in secondi)
+const amano = (t, d, cl) => '<span class="w" style="--d:' + (d || 0) + 's"><i class="' + (cl || '') + '">' + t + '</i></span>';
+const ggmm = dataIso => { const p = dataIso.split('-'); return p[2] + '/' + p[1]; };
+function cognomeHtml() { return cognomeTerzi ? '<i class="mano ev-b">' + esc(cognomeTerzi) + '</i>' : '<span class="vuoto">cognome</span>'; }
+function cellaFirma(t, d) {
+  if (t === 'avviso') return amano('AVVISO', d, 'mano ev-a');
+  if (t === 'sconosciuto') return amano('SCONOSCIUTO', d, 'mano ev-r sm');
+  if (t === 'terzi') return amano(FIRMA, d) + '<span class="cg-live">' + cognomeHtml() + '</span>';
+  return '';
+}
+function bloccoCarta(n, t, d) {
+  const b = perN[n].b, riga = m => perN[m]
+    ? '<div class="br fuori"><span>' + m + '</span><span>' + esc(perN[m].b.destinatario) + '</span><span></span></div>' : '';
+  return '<div class="carta blocco-c">' +
+    '<div class="bt"><span>AFFIDO RACCOMANDATE N° ' + esc(S.giro.affido || '') + '</span><span>' + ggmmaaaa(S.giro.data) + '</span></div>' +
+    '<div class="br th"><span>N</span><span>Destinatario</span><span>Ricevente (firma leggibile)</span></div>' +
+    riga(n - 1) +
+    '<div class="br qui t-' + t + '"><span>' + n + '</span><span><b class="dn">' + esc(b.destinatario) + '</b><small>' + esc(indirizzoBusta(n)) + '</small></span>' +
+      '<span class="ric">' + cellaFirma(t, d) + '</span></div>' +
+    riga(n + 1) + '</div>';
+}
+function bloccoMini(n, t, d) {
+  return '<div class="carta blocco-c mini"><div class="br qui t-' + t + '"><span>' + n + '</span><span class="ric">' + cellaFirma(t, d) + '</span></div></div>';
+}
+function riquadroBusta(t, d, dataIso) {
+  const sc = t === 'sconosciuto';
+  const voci = ['Destinatario sconosciuto', 'Destinatario trasferito', 'Destinatario deceduto', 'Indirizzo errato e/o incompleto', 'rifiutato', 'altro'];
+  return '<div class="rec' + (sc ? ' attivo' : '') + '"><b>Recapito non effettuato in quanto:</b>' +
+    voci.map((v, i) => '<span class="voce' + (sc && i === 0 ? ' si' : '') + '"><span class="box">' + (sc && i === 0 ? amano(CROCE, d) : '') + '</span>' + v + '</span>').join('') +
+    '<span class="df">Data <span class="fill">' + (sc ? amano(ggmm(dataIso), d + .1, 'mano') : '') + '</span>' +
+    ' Firma <span class="fill f">' + (sc ? amano(FIRMA, d + .2) : '') + '</span></span>' +
+    (t === 'avviso' ? '<span class="su">' + amano('AVVISO', d, 'mano ev-a') + '</span>' : '') + '</div>';
+}
+function codiceHtml(b) {
+  const cod = String(b.codice || ''), pre = String((S.giro.avviso || {}).prestampato_invio || '');
+  return (pre && cod.indexOf(pre) === 0) ? esc(pre) + '<b>' + esc(cod.slice(pre.length)) + '</b>' : '<b>' + esc(cod) + '</b>';
+}
+function bustaCarta(n, t, d, dataIso) {
+  const b = perN[n].b;
+  return '<div class="carta busta-c">' +
+    '<div class="fin"><small>Cognome e nome</small><b>' + esc(b.destinatario) + '</b></div>' +
+    '<div class="codbar"><span class="R">R</span><i class="barre"></i><span>' + codiceHtml(b) + '</span></div>' +
+    riquadroBusta(t, d, dataIso) +
+    (t === 'avviso' ? '<span class="borsa">↩ torna in borsa</span>' : '') + '</div>';
+}
+function bustaMini(n, d) {
+  return '<div class="carta busta-m"><div class="fin"><b>' + esc(perN[n].b.destinatario) + '</b></div><i class="barre"></i>' +
+    '<span class="su">' + amano('AVVISO', d, 'mano ev-a') + '</span><span class="borsa">↩ in borsa</span></div>';
+}
+function avvisoCarta(n, ora, dataIso, tardi) {
+  const b = perN[n].b, cod = String(b.codice || ''), pre = String((S.giro.avviso || {}).prestampato_invio || '');
+  const conPre = pre && cod.indexOf(pre) === 0;
+  return '<div class="carta avviso-c">' +
+    '<div class="ah"><span class="logo">MOLE<br>POST</span><span class="citta">Città di Torino</span><span class="logo l2">B&amp;B</span></div>' +
+    '<div class="st">In data <span class="fill">' + amano(ggmm(dataIso), 0, 'mano') + '</span>/' + dataIso.slice(0, 4) + ', alle ore <span class="fill">' +
+      amano('<input id="ora" class="ora-in' + (tardi ? ' controlla' : '') + '" type="time" value="' + esc(ora) + '">', .08) + '</span><span class="matita">✎</span>' +
+      ' abbiamo tentato di consegnare la sua tessera elettorale…</div>' +
+    (tardi ? '<div class="tardi">⚠ Stai segnando dopo: scrivi l\'ora vera in cui hai lasciato l\'avviso.</div>' : '') +
+    '<div class="st">N° invio: ' + (conPre ? '<span class="pre">' + esc(pre) + '</span>' : '') +
+      '<span class="fill inv">' + amano(esc(conPre ? cod.slice(pre.length) : cod), .16, 'mano') + '</span></div>' +
+    '<div class="st">Destinatario: <span class="fill lungo">' + amano(esc(b.destinatario), .24, 'mano') + '</span></div>' +
+    '<div class="righe-r"><i style="width:94%"></i><i style="width:82%"></i><i style="width:58%"></i></div>' +
+    '<div class="righe-g"><i style="width:97%"></i><i style="width:66%"></i></div></div>';
+}
+const cap = t => '<div class="cap">' + t + '</div>';
+function scrivania(f) {
+  const n = f.n, b = perN[n].b, t = f.tipo, oggi = iso(new Date());
+  let h = '<div class="fh"><span class="chip c-' + t + '">' + NOMI[t] + '</span><span class="fh-n">' + n + '</span>' +
+    '<span class="fh-d">' + nomeHtml(b.destinatario) + '</span></div>';
+  if (t === 'avviso') h += cap('Avviso di giacenza') + avvisoCarta(n, f.ora, f.data, f.tardi) +
+    '<div class="due"><div>' + cap('Blocco') + bloccoMini(n, 'avviso', .3) + '</div><div>' + cap('Busta') + bustaMini(n, .3) + '</div></div>';
+  if (t === 'sconosciuto') h += cap('Blocco') + bloccoCarta(n, 'sconosciuto', 0) + cap('Busta') + bustaCarta(n, 'sconosciuto', .2, oggi);
+  if (t === 'terzi') h += cap('Blocco · fai firmare e scrivi il cognome') + bloccoCarta(n, 'terzi', 0) +
+    '<label for="cognome" class="lab">Cognome di chi ritira</label>' +
+    '<input class="campo maiusc" id="cognome" data-fuoco type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="done" value="' + esc(cognomeTerzi) + '">' +
+    '<p class="errore" id="err" hidden>Scrivi il cognome di chi ritira.</p>';
+  return h + '<div class="fondo"><button class="esito ' + t + '" data-a="ok-' + t + '">Fatto ✓</button>' +
+    '<button class="neutro" data-a="chiudifoglio">Annulla</button></div>';
+}
+
 function toast(testo, annulla) {
   clearTimeout(timerToast);
   $toast.innerHTML = '<div class="t"><span>' + esc(testo) + '</span>' + (annulla ? '<button data-a="annulla-ultimo">Annulla</button>' : '<span style="width:10px"></span>') + '</div>';
@@ -464,7 +551,7 @@ function segna(n, esito, extra) {
     dopo = () => {
       const riga = $app.querySelector('.busta[data-n="' + n + '"]');
       if (riga) riga.classList.add('appena');
-      if (festa && vista().s === 'tappa' && tappaQui().ti === ti) faiFesta();
+      if (festa && vista().s === 'palazzo' && tappaQui().ti === ti) faiFesta();
       toast('N ' + n + ' · ' + NOMI[esito], true);
     };
     disegna();
@@ -501,6 +588,7 @@ function posticipa(modo) {
   if (j <= i || j >= S.ordine.length) { disegna(); return; }
   S.ordine.splice(i, 1); S.ordine.splice(j, 0, id);
   if (S.rimandate.indexOf(id) < 0) S.rimandate.push(id);
+  lasciaPalazzo();
   salva(); disegna();
   toast('Palazzo rimandato: ora è la tappa ' + (j + 1));
 }
@@ -568,6 +656,32 @@ function mostraMappa(nuova) {
   });
 }
 function nascondiMappa() { if (!$mappa.hidden) $mappa.hidden = true; }
+
+/* Mappa piccola nella schermata della tappa: è la stessa mappa, spostata dentro la pagina.
+   Mostra la strada dalla tappa prima a questa; toccandola si apre a tutto schermo. */
+const $carta = document.getElementById('m-carta');
+const $corpoMappa = $carta.parentNode;
+function riportaCarta() { if ($carta.parentNode !== $corpoMappa) $corpoMappa.insertBefore($carta, $corpoMappa.firstChild); }
+function mostraMini() {
+  const posto = document.getElementById('posto-mappa'); if (!posto) return;
+  posto.insertBefore($carta, posto.firstChild);
+  selMappa = S.ordine[S.pos];
+  preparaMappa().then(zona => {
+    if (vista().s !== 'tappa' || $carta.parentNode !== posto) return;
+    if (!M) creaMappa(zona);
+    M.map.invalidateSize();
+    disegnaGiro();
+    inquadraTappa();
+  }, () => { posto.classList.add('senza'); });
+}
+function inquadraTappa() {
+  const ti = S.ordine[S.pos]; if (!haCoord(ti)) return;
+  const pts = [puntoT(ti)], prev = S.pos > 0 ? S.ordine[S.pos - 1] : -1;
+  if (prev >= 0 && haCoord(prev)) pts.push(puntoT(prev));
+  else if (prev < 0) { const pk = puntoPark(tappe[ti].zi); if (pk) pts.push(pk); }
+  if (pts.length > 1 && metri(pts[0], pts[1]) > 25) M.map.fitBounds(pts, {padding: [44, 44], maxZoom: 18, animate: false});
+  else M.map.setView(pts[0], 18, {animate: false});
+}
 
 function creaMappa(zona) {
   const pts = tappe.filter((t, ti) => haCoord(ti)).map(t => [t.lat, t.lon]);
@@ -810,9 +924,11 @@ const AZIONI = {
   anim() { S.anim = S.anim === false; salva(); document.body.classList.toggle('anim', animOn()); disegnaSopra(); },
   prec() { if (S.pos > 0) { S.pos--; salva(); disegna(); } },
   succ() {
+    lasciaPalazzo();
     if (S.pos < S.ordine.length - 1) { S.pos++; salva(); disegna(); }
     else apri({s: 'riepilogo'});
   },
+  palazzo() { apri({s: 'palazzo'}); },
   vaitappa(el) { S.pos = Math.max(0, Math.min(S.ordine.length - 1, +el.dataset.i)); S.pila = []; salva(); disegna(); },
   busta(el) { apri({s: 'busta', n: +el.dataset.n}); },
   gigante(el) { gigante = +el.dataset.n; disegnaSopra(); },
@@ -825,6 +941,7 @@ const AZIONI = {
       return apriFoglio({tipo: 'avviso', n: n, tardi: r.esito === 'da_segnare',
         ora: gia ? (r.ora_avviso || r.ora) : hhmm(new Date()), data: gia && r.data_avviso ? r.data_avviso : iso(new Date())});
     }
+    if (e === 'terzi') cognomeTerzi = String(r.ritirato_da || '');
     apriFoglio({tipo: e, n: n});
   },
   'ok-terzi'() {
@@ -852,6 +969,7 @@ const AZIONI = {
     S.esportato = false;
     const ultima = S.pos === S.ordine.length - 1;
     if (!ultima) S.pos++;
+    lasciaPalazzo();
     salva();
     dopo = () => { if (k) saltello(); toast(k ? (k === 1 ? '1 busta' : k + ' buste') + ' da segnare dopo' : 'Palazzo già segnato'); };
     disegna();
@@ -909,7 +1027,14 @@ document.addEventListener('click', ev => {
   const f = AZIONI[el.dataset.a];
   if (f) f(el, ev);
 });
-document.addEventListener('input', ev => { if (ev.target.id === 'q') risultati(); });
+document.addEventListener('input', ev => {
+  if (ev.target.id === 'q') risultati();
+  if (ev.target.id === 'cognome') {   // il cognome compare dal vivo sulla riga del blocco disegnata
+    cognomeTerzi = ev.target.value.trim().toUpperCase();
+    document.querySelectorAll('.cg-live').forEach(el => { el.innerHTML = cognomeHtml(); });
+    const err = document.getElementById('err'); if (err && cognomeTerzi) err.hidden = true;
+  }
+});
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'cognome') { ev.preventDefault(); AZIONI['ok-terzi'](); }
 });

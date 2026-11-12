@@ -1,10 +1,10 @@
 /* Giro Postino – service worker.
    Tiene in memoria i file dell'app (così funziona senza internet)
    e riceve il file del giro quando arriva da "Condividi". */
-const VERSIONE = 'gp-v5';
+const VERSIONE = 'gp-v6';
 const CONDIVISO = 'gp-condiviso';
 const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
-  'lib/leaflet.js', 'lib/leaflet.css', 'mappa_zona.json'];
+  'lib/leaflet.js', 'lib/leaflet.css', 'lib/kalam-700.woff2', 'mappa_zona.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSIONE).then(c => c.addAll(FILE)));
