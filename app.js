@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.0';
+const VERSIONE_APP = '1.1';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -160,9 +160,13 @@ function disegna() {
     else if (v.s === 'cerca') h = pagCerca();
     else if (v.s === 'tappe') h = pagTappe();
     else if (v.s === 'riepilogo') h = pagRiepilogo();
+    else if (v.s === 'mappa') h = '';
     else h = pagTappa();
   }
   const nuova = chiave !== ultimaVista;
+  const conMappa = !!S.giro && vista().s === 'mappa';
+  $app.hidden = conMappa;
+  if (conMappa) mostraMappa(nuova); else nascondiMappa();
   const y = window.scrollY;
   $app.innerHTML = h;
   if (nuova) window.scrollTo(0, 0);
@@ -178,7 +182,8 @@ function barraSu() {
   const k = daSegnare().length;
   return '<div class="barra">' +
     '<button class="neutro conta cresce' + (k ? ' ha' : '') + '" data-a="dasegnare">⏳ Da segnare <b id="conta">' + k + '</b></button>' +
-    '<button class="neutro" data-a="cerca">🔍 Cerca</button>' +
+    '<button class="neutro" data-a="cerca" aria-label="Cerca">🔍</button>' +
+    '<button class="neutro" data-a="mappa" aria-label="Mappa">🗺</button>' +
     '<button class="neutro" data-a="menu" aria-label="Menu">☰</button></div>';
 }
 function barraIndietro(titolo) {
@@ -421,6 +426,7 @@ function corpoFoglio(f) {
       '<button class="neutro" data-a="chiudifoglio">Annulla</button>';
   }
   if (f.tipo === 'menu') return '<h2>Menu</h2>' +
+    '<button class="neutro" data-a="mappa">🗺 Mappa del giro</button>' +
     '<button class="neutro" data-a="tappe">Tutte le tappe</button>' +
     '<button class="neutro" data-a="riepilogo">Riepilogo ed esporta</button>' +
     '<button class="neutro" data-a="carica">Carica un altro giro</button>' +
@@ -497,6 +503,254 @@ function posticipa(modo) {
   if (S.rimandate.indexOf(id) < 0) S.rimandate.push(id);
   salva(); disegna();
   toast('Palazzo rimandato: ora è la tappa ' + (j + 1));
+}
+
+/* ================= mappa (offline) =================
+   La mappa della zona (strade, palazzi, verde) è un file fisso dell'app, da OpenStreetMap.
+   Sopra si disegnano parcheggio, tappe e percorso presi dal file del giro, che resta sul telefono.
+   Leaflet si carica solo la prima volta che si apre la mappa. */
+const $mappa = document.getElementById('mappa');
+const COL_TRATTI = ['#466EA0', '#0F8C8C', '#C2661B', '#6E7F2A'];
+let M = null;            // {map, rGiro, giro, frecce, nomi, strati, gps}
+let mappaPronta = null;  // promessa: Leaflet + dati della zona
+let selMappa = -1;       // tappa scelta sulla mappa (indice ti)
+
+function caricaScript(src) {
+  return new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
+}
+function preparaMappa() {
+  if (!mappaPronta) {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'lib/leaflet.css'; document.head.appendChild(l);
+    mappaPronta = Promise.all([
+      caricaScript('lib/leaflet.js'),
+      fetch('mappa_zona.json').then(r => r.ok ? r.json() : null).catch(() => null)
+    ]).then(r => r[1]);
+    mappaPronta.catch(() => { mappaPronta = null; });
+  }
+  return mappaPronta;
+}
+const haCoord = ti => tappe[ti] && typeof tappe[ti].lat === 'number' && typeof tappe[ti].lon === 'number';
+const puntoT = ti => [tappe[ti].lat, tappe[ti].lon];
+function puntoPark(zi) { const p = (S.giro.zone[zi] || {}).parcheggio; return p && typeof p.lat === 'number' ? [p.lat, p.lon] : null; }
+function metri(a, b) {
+  const k = Math.cos(a[0] * Math.PI / 180);
+  return Math.hypot((b[0] - a[0]) * 111320, (b[1] - a[1]) * 111320 * k);
+}
+function angolo(a, b) {   // direzione sullo schermo, in gradi, in senso orario da destra
+  return Math.atan2(-(b[0] - a[0]), (b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180)) * 180 / Math.PI;
+}
+function scalini(a, inizio, o) {   // coordinate "a scalini" -> [[lat, lon], ...]
+  const p = []; let x = 0, y = 0;
+  for (let i = inizio; i + 1 < a.length; i += 2) { x += a[i]; y += a[i + 1]; p.push([o[0] + x / 1e5, o[1] + y / 1e5]); }
+  return p;
+}
+function statoTappa(ti) {
+  const es = tappe[ti].buste.map(b => esitoDi(b.n));
+  if (es.every(e => FINALI.indexOf(e) >= 0)) return es.some(e => e === 'avviso' || e === 'sconosciuto') ? 'avvisi' : 'fatta';
+  if (es.every(e => e)) return 'dasegnare';
+  if (S.rimandate.indexOf(ti) >= 0) return 'rimandata';
+  return es.some(e => e) ? 'iniziata' : 'dafare';
+}
+
+function mostraMappa(nuova) {
+  $mappa.hidden = false;
+  if (nuova || selMappa < 0 || !tappe[selMappa]) selMappa = S.ordine[S.pos];
+  schedaMappa();
+  preparaMappa().then(zona => {
+    if (vista().s !== 'mappa') return;
+    const prima = !M;
+    if (prima) creaMappa(zona);
+    M.map.invalidateSize();
+    disegnaGiro();
+    if ((nuova || prima) && haCoord(selMappa)) M.map.setView(puntoT(selMappa), Math.max(M.map.getZoom() || 0, 17), {animate: false});
+  }, () => {
+    document.getElementById('m-carta').innerHTML = '<p class="m-errore">Non riesco ad aprire la mappa. Se è la prima volta, apri l\'app una volta con internet.</p>';
+  });
+}
+function nascondiMappa() { if (!$mappa.hidden) $mappa.hidden = true; }
+
+function creaMappa(zona) {
+  const pts = tappe.filter((t, ti) => haCoord(ti)).map(t => [t.lat, t.lon]);
+  let lim = L.latLngBounds(pts.length ? pts : [[45.05, 7.66]]);
+  if (zona && zona.box) lim = lim.extend([[zona.box[0], zona.box[1]], [zona.box[2], zona.box[3]]]);
+  const map = L.map('m-carta', {zoomControl: false, minZoom: 14, maxZoom: 19, zoomSnap: 0.5,
+    maxBounds: lim.pad(0.15), maxBoundsViscosity: 0.8, fadeAnimation: false, markerZoomAnimation: animOn(), zoomAnimation: animOn()});
+  map.attributionControl.setPrefix(false).addAttribution('© OpenStreetMap');
+  map.setView(haCoord(selMappa) ? puntoT(selMappa) : lim.getCenter(), 17);
+  M = {map: map, strati: null, gps: null,
+    rGiro: L.canvas({padding: 0.4}),
+    giro: L.layerGroup().addTo(map), frecce: L.layerGroup(), nomi: L.layerGroup()};
+  if (zona) disegnaBase(zona);
+  map.on('zoomend', zoomMappa);
+  zoomMappa();
+}
+
+function disegnaBase(z) {
+  const o = z.o, R = L.canvas({padding: 0.4}), map = M.map;
+  const anelli = lista => lista.map(a => [scalini(a, 0, o)]);
+  const base = {renderer: R, interactive: false, lineCap: 'round', lineJoin: 'round'};
+  const st = M.strati = {};
+  st.verde = L.polygon(anelli(z.verde || []), Object.assign({}, base, {stroke: false, fillColor: '#D3E7CE', fillOpacity: 1})).addTo(map);
+  st.edifici = L.polygon(anelli(z.edifici || []), Object.assign({}, base, {color: '#BFC9D5', weight: 0.6, fillColor: '#D8DFE8', fillOpacity: 1})).addTo(map);
+  st.ferrovia = L.polyline((z.ferrovia || []).map(a => scalini(a, 0, o)), Object.assign({}, base, {color: '#A3ADBA', weight: 2, dashArray: '6 5'})).addTo(map);
+  const cl = [[], [], [], [], []];
+  (z.strade || []).forEach(s => { if (cl[s[0]]) cl[s[0]].push(scalini(s, 2, o)); });
+  st.c4 = L.polyline(cl[4], Object.assign({}, base, {color: '#AEB9C6', weight: 1.2, dashArray: '3 4'})).addTo(map);
+  st.c3 = L.polyline(cl[3], Object.assign({}, base, {color: '#FFFFFF', weight: 2.5})).addTo(map);
+  st.b2 = L.polyline(cl[2], Object.assign({}, base, {color: '#C3CDD9'})).addTo(map);
+  st.b1 = L.polyline(cl[1], Object.assign({}, base, {color: '#C3CDD9'})).addTo(map);
+  st.b0 = L.polyline(cl[0], Object.assign({}, base, {color: '#D8C79C'})).addTo(map);
+  st.c2 = L.polyline(cl[2], Object.assign({}, base, {color: '#FFFFFF'})).addTo(map);
+  st.c1 = L.polyline(cl[1], Object.assign({}, base, {color: '#FFFFFF'})).addTo(map);
+  st.c0 = L.polyline(cl[0], Object.assign({}, base, {color: '#FBF2D9'})).addTo(map);
+  // Nomi delle vie: uno ogni 300 m circa per ogni via, sul tratto dritto più lungo
+  const posti = {};
+  (z.strade || []).forEach(s => {
+    if (s[1] < 0 || s[0] > 2) return;
+    const p = scalini(s, 2, o);
+    let best = 0, bi = 0;
+    for (let i = 0; i + 1 < p.length; i++) { const d = metri(p[i], p[i + 1]); if (d > best) { best = d; bi = i; } }
+    if (best < 70) return;
+    const a = p[bi], b = p[bi + 1], c = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const l = posti[s[1]] || (posti[s[1]] = []);
+    if (l.some(q => metri(q, c) < 300)) return;
+    l.push(c);
+    let ang = angolo(a, b); if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
+    L.marker(c, {interactive: false, keyboard: false, icon: L.divIcon({className: 'm-via', iconSize: [0, 0],
+      html: '<span style="transform:translate(-50%,-50%) rotate(' + ang.toFixed(0) + 'deg)">' + esc(z.nomi[s[1]]) + '</span>'})}).addTo(M.nomi);
+  });
+}
+
+function zoomMappa() {
+  const z = M.map.getZoom(), k = Math.min(2.4, Math.max(0.3, Math.pow(2, z - 16)));
+  const st = M.strati;
+  if (st) {
+    const w = [10, 8, 6].map(x => Math.max(1, x * k));
+    [0, 1, 2].forEach(c => { st['c' + c].setStyle({weight: w[c]}); st['b' + c].setStyle({weight: w[c] + (z >= 15 ? 2 : 0), opacity: z >= 15 ? 1 : 0}); });
+    st.c3.setStyle({weight: Math.max(1, 3 * k)});
+    st.c4.setStyle({opacity: z >= 17 ? 1 : 0});
+    st.edifici.setStyle({weight: z >= 17 ? 0.6 : 0});
+    if (z >= 16) M.nomi.addTo(M.map); else M.nomi.remove();
+  }
+  if (z >= 15.5) M.frecce.addTo(M.map); else M.frecce.remove();
+  M.map.getContainer().classList.toggle('m-lontano', z < 16);
+}
+
+function decodPercorso(a) {
+  const p = []; let x = 0, y = 0;
+  for (let i = 0; i + 1 < a.length; i += 2) { x += a[i]; y += a[i + 1]; p.push([x / 1e5, y / 1e5]); }
+  return p;
+}
+function primaDellaZona(ti) { return ti === 0 || tappe[ti - 1].zi !== tappe[ti].zi; }
+function ultimaDellaZona(ti) { return ti === tappe.length - 1 || tappe[ti + 1].zi !== tappe[ti].zi; }
+
+function disegnaGiro() {
+  const g = M.giro, R = M.rGiro, ord = S.ordine;
+  g.clearLayers(); M.frecce.clearLayers();
+  const freccia = (linea, col) => {
+    let tot = 0; const d = [];
+    for (let i = 0; i + 1 < linea.length; i++) { d.push(metri(linea[i], linea[i + 1])); tot += d[i]; }
+    if (tot < 45) return;
+    let s = 0, i = 0;
+    while (i < d.length - 1 && s + d[i] < tot / 2) { s += d[i]; i++; }
+    const a = linea[i], b = linea[i + 1], f = d[i] ? (tot / 2 - s) / d[i] : 0;
+    const c = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+    L.marker(c, {interactive: false, keyboard: false, icon: L.divIcon({className: 'm-freccia', iconSize: [16, 16],
+      html: '<svg viewBox="0 0 10 10" style="transform:rotate(' + angolo(a, b).toFixed(0) + 'deg)"><path d="M1.5 1 L9 5 L1.5 9 L3.5 5 Z" fill="' + col + '" stroke="#fff" stroke-width="1"/></svg>'})}).addTo(M.frecce);
+  };
+  for (let i = 0; i <= ord.length; i++) {
+    const ritorno = i === ord.length;
+    const ti = ritorno ? ord[i - 1] : ord[i], prev = i > 0 ? ord[i - 1] : -1;
+    if (!haCoord(ti)) continue;
+    const t = tappe[ti], zona = S.giro.zone[t.zi] || {};
+    let linea = null, dritta = false;
+    if (ritorno) {
+      const pk = puntoPark(t.zi); if (!pk) continue;
+      if (ultimaDellaZona(ti) && Array.isArray(zona.percorso_ritorno) && zona.percorso_ritorno.length >= 4) linea = decodPercorso(zona.percorso_ritorno);
+      else { linea = [puntoT(ti), pk]; dritta = true; }
+    } else {
+      const contigua = (i === 0 && primaDellaZona(ti)) || (prev === ti - 1 && tappe[prev].zi === t.zi);
+      if (contigua && Array.isArray(t.percorso) && t.percorso.length >= 4) linea = decodPercorso(t.percorso);
+      else {
+        const da = i === 0 ? puntoPark(t.zi) : (haCoord(prev) ? puntoT(prev) : null);
+        if (!da) continue;
+        linea = [da, puntoT(ti)]; dritta = true;
+      }
+    }
+    const tr = trattoDi(ti), col = COL_TRATTI[(tr < 0 ? 0 : tr) % COL_TRATTI.length];
+    const fatto = !ritorno && i <= S.pos, prossimo = i === S.pos + 1;
+    L.polyline(linea, {renderer: R, interactive: false, color: col, lineCap: 'round', lineJoin: 'round',
+      weight: prossimo ? 7 : (fatto ? 4 : 5), opacity: fatto ? 0.35 : 0.9,
+      dashArray: ritorno ? '8 9' : (dritta ? '2 9' : null)}).addTo(g);
+    if (!fatto) freccia(linea, col);
+  }
+  S.giro.zone.forEach((z, zi) => {
+    const pk = puntoPark(zi); if (!pk) return;
+    L.marker(pk, {keyboard: false, zIndexOffset: 500, icon: L.divIcon({className: '', iconSize: [36, 36], iconAnchor: [64, 18], html: '<div class="m-park">🛵</div>'})})
+      .on('click', () => toast('🛵 Parcheggio vicino a ' + (z.parcheggio.vicino_a || ''))).addTo(g);
+  });
+  ord.forEach((ti, i) => {
+    if (!haCoord(ti)) return;
+    const qui = i === S.pos, sel = ti === selMappa, dim = qui ? 40 : 30;
+    L.marker(puntoT(ti), {keyboard: false, zIndexOffset: qui ? 1000 : (sel ? 900 : 0),
+      icon: L.divIcon({className: '', iconSize: [dim, dim],
+        html: '<div class="m-t s-' + statoTappa(ti) + (qui ? ' qui' : '') + (sel ? ' sel' : '') + '">' + (i + 1) + '</div>'})})
+      .on('click', () => scegliTappa(ti, false)).addTo(g);
+  });
+}
+
+function scegliTappa(ti, centra) {
+  selMappa = ti; schedaMappa();
+  if (M) { disegnaGiro(); if (centra && haCoord(ti)) M.map.panTo(puntoT(ti), {animate: animOn()}); }
+}
+function schedaMappa() {
+  const box = document.getElementById('m-scheda'), ti = selMappa;
+  if (!tappe[ti]) { box.innerHTML = ''; return; }
+  const i = S.ordine.indexOf(ti), t = tappe[ti], q = t.buste.length;
+  const f = t.buste.filter(b => fatta(b.n)).length, st = statoTappa(ti);
+  box.innerHTML = '<div class="m-nav">' +
+    '<button class="freccia" data-a="m-prec" aria-label="Tappa prima"' + (i <= 0 ? ' disabled' : '') + '>‹</button>' +
+    '<div class="m-tit">Tappa ' + (i + 1) + ' di ' + S.ordine.length + (i === S.pos ? ' <span class="m-qui">sei qui</span>' : '') +
+    '<b>' + esc(t.indirizzo) + '</b></div>' +
+    '<button class="freccia" data-a="m-succ" aria-label="Tappa dopo"' + (i >= S.ordine.length - 1 ? ' disabled' : '') + '>›</button></div>' +
+    '<div class="m-sotto">' + (q === 1 ? '1 lettera' : q + ' lettere') + ' · N ' + t.buste.map(b => b.n).join(', ') +
+    ' · <b>' + f + '/' + q + ' fatte</b>' + (st === 'rimandata' ? ' · <span class="etichetta">rimandata</span>' : '') +
+    (haCoord(ti) ? '' : ' · <i>senza posizione sulla mappa</i>') + '</div>' +
+    '<button class="pieno" data-a="m-vai">' + (i === S.pos ? 'Torna alla tappa' : 'Vai a questa tappa ›') + '</button>';
+}
+function legendaMappa() {
+  const tr = S.giro.tratti || [];
+  return '<b>Le tappe</b>' +
+    '<div class="m-leg"><span class="m-t s-dafare qui">7</span> sei qui</div>' +
+    '<div class="m-leg"><span class="m-t s-dafare">8</span> da fare</div>' +
+    '<div class="m-leg"><span class="m-t s-fatta">5</span> finita</div>' +
+    '<div class="m-leg"><span class="m-t s-avvisi">6</span> finita, con avvisi o sconosciuti</div>' +
+    '<div class="m-leg"><span class="m-t s-dasegnare">4</span> da segnare</div>' +
+    '<div class="m-leg"><span class="m-t s-rimandata">9</span> rimandata</div>' +
+    '<b>Il percorso</b>' +
+    (tr.length ? tr.map((x, k) => '<div class="m-leg"><i class="m-linea" style="background:' + COL_TRATTI[k % COL_TRATTI.length] + '"></i> tratto ' + (k + 1) + ': ' + esc(testoTratto(k)) + '</div>').join('') : '') +
+    '<div class="m-leg"><i class="m-linea chiara"></i> già fatto</div>' +
+    '<div class="m-leg"><i class="m-linea tratt"></i> ritorno allo scooter</div>' +
+    '<button class="neutro" data-a="m-legenda">Chiudi</button>';
+}
+function dovesono() {
+  if (!M || !navigator.geolocation) { toast('Posizione non disponibile su questo telefono'); return; }
+  toast('Cerco la tua posizione…');
+  navigator.geolocation.getCurrentPosition(p => {
+    if (!M) return;
+    const ll = [p.coords.latitude, p.coords.longitude], acc = Math.round(p.coords.accuracy || 0);
+    if (M.gps) M.gps.forEach(l => l.remove());
+    M.gps = [
+      L.circle(ll, {radius: acc, renderer: M.rGiro, interactive: false, color: '#23344D', weight: 1, fillColor: '#466EA0', fillOpacity: 0.12}).addTo(M.map),
+      L.marker(ll, {interactive: false, keyboard: false, zIndexOffset: 2000, icon: L.divIcon({className: '', iconSize: [22, 22], html: '<div class="m-io"></div>'})}).addTo(M.map)
+    ];
+    const lim = M.map.options.maxBounds;
+    if (lim && !lim.contains(ll)) { toast('Sei fuori dalla zona della mappa'); return; }
+    M.map.setView(ll, Math.max(M.map.getZoom(), 17), {animate: animOn()});
+    toast('Sei qui · precisione circa ' + acc + ' m');
+  }, e => {
+    toast(e && e.code === 1 ? 'Posizione non permessa: consentila a Chrome per questa app' : 'Posizione non trovata: riprova all\'aperto');
+  }, {enableHighAccuracy: true, timeout: 20000, maximumAge: 15000});
 }
 
 /* ================= esporta ================= */
@@ -629,6 +883,22 @@ const AZIONI = {
       testo: (m === 1 ? 'Manca l\'esito di 1 busta.' : 'Manca l\'esito di ' + m + ' buste.') + ' Nel riepilogo risulteranno "da segnare". Vuoi esportare lo stesso?',
       si: 'Esporta lo stesso', no: 'No, prima le segno', fai: esporta});
     else esporta();
+  },
+  mappa() { foglio = null; if (vista().s !== 'mappa') apri({s: 'mappa'}); else disegnaSopra(); },
+  'm-prec'() { const i = S.ordine.indexOf(selMappa); if (i > 0) scegliTappa(S.ordine[i - 1], true); },
+  'm-succ'() { const i = S.ordine.indexOf(selMappa); if (i < S.ordine.length - 1) scegliTappa(S.ordine[i + 1], true); },
+  'm-vai'() { const i = S.ordine.indexOf(selMappa); if (i >= 0) S.pos = i; S.pila = []; salva(); disegna(); },
+  'm-gps'() { dovesono(); },
+  'm-tutto'() {
+    if (!M) return;
+    M.map.invalidateSize();
+    const pts = S.ordine.filter(haCoord).map(puntoT);
+    S.giro.zone.forEach((z, zi) => { const p = puntoPark(zi); if (p) pts.push(p); });
+    if (pts.length) M.map.fitBounds(pts, {padding: [24, 24], animate: animOn()});
+  },
+  'm-legenda'() {
+    const box = document.getElementById('m-legenda');
+    if (box.hidden) { box.innerHTML = legendaMappa(); box.hidden = false; } else box.hidden = true;
   },
   aggiorna() { if (swInAttesa) swInAttesa.postMessage('AGGIORNA'); }
 };

@@ -14,6 +14,11 @@
 <body>
 <div id="aggiorna" hidden><button data-a="aggiorna">Nuova versione disponibile – tocca per aggiornare</button></div>
 <main id="app"></main>
+<section id="mappa" hidden>
+  <div class="barra m-su"><button class="neutro" data-a="indietro">‹ Indietro</button><div class="titolo-pag">Mappa</div><button class="neutro" data-a="m-legenda" aria-label="Legenda">?</button><button class="neutro" data-a="m-gps">📍 Dove sono</button></div>
+  <div class="m-corpo"><div id="m-carta"></div><button class="neutro m-tutto" data-a="m-tutto">⤢ Tutto il giro</button><div id="m-legenda" hidden></div></div>
+  <div id="m-scheda"></div>
+</section>
 <div id="sopra"></div>
 <div id="toast"></div>
 <input type="file" id="file" hidden>

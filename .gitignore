@@ -6,3 +6,5 @@ lista_*
 *.jpeg
 *.jpg
 *.md
+# eccezione: la mappa della zona viene da OpenStreetMap, è pubblica e non contiene dati del giro
+!mappa_zona.json
