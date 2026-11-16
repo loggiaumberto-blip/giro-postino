@@ -598,7 +598,7 @@ function riquadroBusta(t, d, dataIso) {
     voci.map((v, i) => '<span class="voce' + (sc && i === 0 ? ' si' : '') + '"><span class="box">' + (sc && i === 0 ? amano(CROCE, d) : '') + '</span>' + v + '</span>').join('') +
     '<span class="df">Data <span class="fill">' + (sc ? amano(ggmm(dataIso), d + .1, 'mano') : '') + '</span>' +
     ' Firma <span class="fill f">' + (sc ? amano(FIRMA, d + .2) : '') + '</span></span>' +
-    (t === 'avviso' ? '<span class="su">' + amano('AVVISO', d, 'mano ev-a') + '</span>' : '') + '</div>';
+    (t === 'avviso' ? '<span class="su">' + amano('AVVISO', d, 'mano ev-a') + '<br>' + amano(ggmm(dataIso), d + .12, 'mano dt') + '</span>' : '') + '</div>';
 }
 function codiceHtml(b) {
   const cod = String(b.codice || ''), pre = String((S.giro.avviso || {}).prestampato_invio || '');
@@ -612,9 +612,10 @@ function bustaCarta(n, t, d, dataIso) {
     riquadroBusta(t, d, dataIso) +
     (t === 'avviso' ? '<span class="borsa">↩ torna in borsa</span>' : '') + '</div>';
 }
-function bustaMini(n, d) {
+function bustaMini(n, d, dataIso) {
+  // sulla busta: AVVISO e sotto la data di oggi (gg/mm)
   return '<div class="carta busta-m"><div class="fin"><b>' + esc(perN[n].b.destinatario) + '</b></div><i class="barre"></i>' +
-    '<span class="su">' + amano('AVVISO', d, 'mano ev-a') + '</span><span class="borsa">↩ in borsa</span></div>';
+    '<span class="su">' + amano('AVVISO', d, 'mano ev-a') + '<br>' + amano(ggmm(dataIso), d + .12, 'mano dt') + '</span><span class="borsa">↩ in borsa</span></div>';
 }
 function avvisoCarta(n, ora, dataIso, tardi) {
   const b = perN[n].b, cod = String(b.codice || ''), pre = String((S.giro.avviso || {}).prestampato_invio || '');
@@ -637,7 +638,7 @@ function scrivania(f) {
   let h = '<div class="fh"><span class="chip c-' + t + '">' + NOMI[t] + '</span><span class="fh-n">' + n + '</span>' +
     '<span class="fh-d">' + nomeHtml(b.destinatario) + '</span></div>';
   if (t === 'avviso') h += cap('Avviso di giacenza') + avvisoCarta(n, f.ora, f.data, f.tardi) +
-    '<div class="due"><div>' + cap('Blocco') + bloccoMini(n, 'avviso', .3) + '</div><div>' + cap('Busta') + bustaMini(n, .3) + '</div></div>';
+    '<div class="due"><div>' + cap('Blocco') + bloccoMini(n, 'avviso', .3) + '</div><div>' + cap('Busta') + bustaMini(n, .3, f.data) + '</div></div>';
   if (t === 'sconosciuto') h += cap('Blocco') + bloccoCarta(n, 'sconosciuto', 0) + cap('Busta') + bustaCarta(n, 'sconosciuto', .2, oggi);
   if (t === 'terzi') h += cap('Blocco · fai firmare e scrivi il cognome') + bloccoCarta(n, 'terzi', 0) +
     '<label for="cognome" class="lab">Cognome di chi ritira</label>' +

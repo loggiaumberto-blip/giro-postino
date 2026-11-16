@@ -441,10 +441,14 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .carta .su { position: absolute; right: 8px; top: 50%; transform: translateY(-50%) rotate(-6deg); }
 .carta .su .mano { font-size: 38px; }
 .carta .borsa { position: absolute; right: 8px; bottom: -11px; background: var(--tono); color: #fff; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px; }
-.busta-m { height: 120px; padding: 7px; background: #FCFCFB; }
+.busta-m { height: 146px; padding: 7px; background: #FCFCFB; }
 .busta-m .fin { position: absolute; left: 7px; top: 7px; right: 62px; padding: 2px 6px; }
 .busta-m .fin b { font-size: 11px; color: #222; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .busta-m .barre { position: absolute; right: 8px; top: 9px; width: 46px; height: 18px; margin: 0; }
-.busta-m .su { left: 0; right: 0; top: auto; bottom: 16px; text-align: center; transform: rotate(-6deg); }
+.busta-m .su { left: 0; right: 0; top: auto; bottom: 14px; line-height: 1; text-align: center; transform: rotate(-6deg); }
 .busta-m .su .mano { font-size: 31px; }
 .busta-m .borsa { bottom: -9px; }
+
+/* data di oggi sotto AVVISO sulla busta */
+.carta .su .mano.dt { font-size: 22px; color: #1F3C9C; }
+.busta-m .su .mano.dt { font-size: 24px; }
