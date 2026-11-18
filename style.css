@@ -291,6 +291,9 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .indir:active { background: rgba(70,110,160,.2); }
 .indir .nomevia { display: block; font-size: 22px; font-weight: 800; line-height: 1.12; overflow-wrap: anywhere; }
 .indir .civ { display: block; font-size: 66px; font-weight: 900; line-height: .95; overflow-wrap: anywhere; }
+.indir .intr { display: inline-block; margin-top: 6px; padding: 3px 12px 4px; border-radius: 10px; background: var(--tono); color: #fff;
+  font-size: 26px; font-weight: 800; line-height: 1.15; }
+.indir .intr b { font-size: 34px; font-weight: 900; }
 .indir .vai { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%;
   background: var(--tono); color: #fff; font-size: 28px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding-bottom: 4px; }
 .indir .lett { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

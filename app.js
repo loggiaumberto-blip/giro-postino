@@ -225,6 +225,7 @@ function pagTappa(nuova) {
   const nuovoPezzo = !rim && tr >= 0 && nTr > 1 && (S.pos === 0 || trattoDi(S.ordine[S.pos - 1]) !== tr);
   let h = '<button class="indir' + (nuova ? ' entra' : '') + '" data-a="palazzo">' +
     '<span class="nomevia">' + esc(vc.via) + '</span>' + (vc.civ ? '<span class="civ">' + esc(vc.civ) + '</span>' : '') +
+    (t.interno ? '<span class="intr">🚪 interno <b>' + esc(t.interno) + '</b></span>' : '') +
     '<span class="lett"><span class="q">' + (q === 1 ? '1 lettera' : q + ' lettere') + '</span>' +
     t.buste.map(b => { const e = esitoDi(b.n); return '<span class="nchip' + (e ? ' e-' + e : '') + '">' + b.n + '</span>'; }).join('') +
     (tappaFinita(t.ti) ? '<span class="ok-chip">✓ fatta</span>' : (rim ? '<span class="etichetta">↪ rimandata</span>' : '')) + '</span>' +
