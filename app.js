@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.3.2';
+const VERSIONE_APP = '1.4';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -113,6 +113,12 @@ const daSegnare = () => tuttiN().filter(n => esitoDi(n) === 'da_segnare');
 const tappaFinita = ti => tappe[ti].buste.every(b => fatta(b.n));
 const tappaGestita = ti => tappe[ti].buste.every(b => esitoDi(b.n));
 const tappaQui = () => tappe[S.ordine[S.pos]];
+// Cortile: tappe dello stesso civico con portoni interni diversi (dal file del giro: campo "cortile"),
+// nell'ordine del giro di adesso
+function cortileDi(ti) {
+  const k = tappe[ti] && tappe[ti].cortile; if (!k) return [];
+  return S.ordine.filter(x => tappe[x].cortile === k);
+}
 
 function trattoDi(ti) {
   const tr = S.giro.tratti; if (!Array.isArray(tr)) return -1;
@@ -223,9 +229,11 @@ function pagTappa(nuova) {
   const rim = S.rimandate.indexOf(t.ti) >= 0, q = t.buste.length, vc = viaCivico(t), k = daSegnare().length;
   const vicina = S.pos > 0 && S.ordine[S.pos - 1] === t.ti - 1 && t.metri_dalla_precedente >= 30;
   const nuovoPezzo = !rim && tr >= 0 && nTr > 1 && (S.pos === 0 || trattoDi(S.ordine[S.pos - 1]) !== tr);
+  const cq = cortileDi(t.ti);
   let h = '<button class="indir' + (nuova ? ' entra' : '') + '" data-a="palazzo">' +
     '<span class="nomevia">' + esc(vc.via) + '</span>' + (vc.civ ? '<span class="civ">' + esc(vc.civ) + '</span>' : '') +
-    (t.interno ? '<span class="intr">🚪 interno <b>' + esc(t.interno) + '</b></span>' : '') +
+    (t.interno ? '<span class="intr">🚪 interno <b>' + esc(t.interno) + '</b></span>' : (t.cortile ? '<span class="intr">🚪 senza interno</span>' : '')) +
+    (cq.length > 1 ? '<span class="cort">🏘 portone ' + (cq.indexOf(t.ti) + 1) + ' di ' + cq.length + ' del cortile</span>' : '') +
     '<span class="lett"><span class="q">' + (q === 1 ? '1 lettera' : q + ' lettere') + '</span>' +
     t.buste.map(b => { const e = esitoDi(b.n); return '<span class="nchip' + (e ? ' e-' + e : '') + '">' + b.n + '</span>'; }).join('') +
     (tappaFinita(t.ti) ? '<span class="ok-chip">✓ fatta</span>' : (rim ? '<span class="etichetta">↪ rimandata</span>' : '')) + '</span>' +
@@ -252,9 +260,20 @@ function pagPalazzo() {
   const ultima = S.pos === S.ordine.length - 1;
   let h = barraIndietro('Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length);
   if (S.rimandate.indexOf(t.ti) >= 0 && !tappaFinita(t.ti)) h += '<div><span class="etichetta">↪ rimandata</span></div>';
+  const cq = cortileDi(t.ti);
   h += '<h1 class="indirizzo">' + esc(t.indirizzo) + '</h1>' +
     '<div class="quante">' + (q === 1 ? '1 lettera qui' : q + ' lettere qui') + '</div>';
-  h += '<div class="lista">' + t.buste.map(b => rigaBusta(b.n)).join('') + '</div>';
+  if (cq.length > 1) {   // cortile: i portoni nell'ordine del giro, ognuno con le sue lettere
+    const tot = cq.reduce((s, x) => s + tappe[x].buste.length, 0);
+    h += '<div class="cort-tit">🏘 Cortile del ' + esc(t.civico) + ' · ' + cq.length + ' portoni · ' + tot + ' lettere</div><div class="lista">' +
+      cq.map((x, k) => {
+        const tt = tappe[x], qui = x === t.ti, st = statoTappa(x), fin = st === 'fatta' || st === 'avvisi';
+        return '<div class="portone' + (qui ? ' qui' : '') + (fin ? ' s-' + st : '') + '"><div class="p-testa"><span class="p-num">' + (fin ? '✓' : k + 1) + '</span>' +
+          '<span class="p-int">' + (tt.interno ? 'interno ' + esc(tt.interno) : 'senza interno') + '</span>' +
+          '<span class="p-stato">' + (qui ? 'sei qui' : (fin ? 'fatto' : '')) + '</span></div>' +
+          tt.buste.map(b => rigaBusta(b.n)).join('') + '</div>';
+      }).join('') + '</div>';
+  } else h += '<div class="lista">' + t.buste.map(b => rigaBusta(b.n)).join('') + '</div>';
   if (t.nota) h += '<div class="nota-box">📝 ' + esc(t.nota) + '</div>';
   h += '<div class="fondo">';
   if (tappaGestita(t.ti)) {
@@ -799,6 +818,14 @@ function mostraMini() {
 }
 function inquadraTappa() {
   const ti = S.ordine[S.pos]; if (!haCoord(ti)) return;
+  const cq = cortileDi(ti).filter(haCoord);
+  if (cq.length) {   // cortile: si vedono l'ultima consegna prima del cortile e tutti i portoni
+    const pts = cq.map(puntoT), pr = primaDelCortile(cq);
+    if (pr >= 0 && haCoord(pr)) pts.push(puntoT(pr));
+    if (pts.length > 1) M.map.fitBounds(pts, {paddingTopLeft: [70, 44], paddingBottomRight: [56, 30], maxZoom: 20, animate: false});
+    else M.map.setView(pts[0], 19.5, {animate: false});
+    return;
+  }
   const pts = [puntoT(ti)], prev = S.pos > 0 ? S.ordine[S.pos - 1] : -1;
   if (prev >= 0 && haCoord(prev)) pts.push(puntoT(prev));
   else if (prev < 0) { const pk = puntoPark(tappe[ti].zi); if (pk) pts.push(pk); }
@@ -810,7 +837,7 @@ function creaMappa(zona) {
   const pts = tappe.filter((t, ti) => haCoord(ti)).map(t => [t.lat, t.lon]);
   let lim = L.latLngBounds(pts.length ? pts : [[45.05, 7.66]]);
   if (zona && zona.box) lim = lim.extend([[zona.box[0], zona.box[1]], [zona.box[2], zona.box[3]]]);
-  const map = L.map('m-carta', {zoomControl: false, minZoom: 14, maxZoom: 19, zoomSnap: 0.5,
+  const map = L.map('m-carta', {zoomControl: false, minZoom: 14, maxZoom: 20, zoomSnap: 0.5,
     maxBounds: lim.pad(0.15), maxBoundsViscosity: 0.8, fadeAnimation: false, markerZoomAnimation: animOn(), zoomAnimation: animOn()});
   map.attributionControl.setPrefix(false).addAttribution('© OpenStreetMap');
   map.setView(haCoord(selMappa) ? puntoT(selMappa) : lim.getCenter(), 17);
@@ -881,9 +908,13 @@ function decodPercorso(a) {
 function primaDellaZona(ti) { return ti === 0 || tappe[ti - 1].zi !== tappe[ti].zi; }
 function ultimaDellaZona(ti) { return ti === tappe.length - 1 || tappe[ti + 1].zi !== tappe[ti].zi; }
 
+function primaDelCortile(cq) {   // la tappa fatta subito prima di entrare nel cortile
+  const i = S.ordine.indexOf(cq[0]); return i > 0 ? S.ordine[i - 1] : -1;
+}
 function disegnaGiro() {
   const g = M.giro, R = M.rGiro, ord = S.ordine;
   g.clearLayers(); M.frecce.clearLayers();
+  const cq = cortileDi(ord[S.pos]).filter(haCoord), inC = new Set(cq.length > 1 ? cq : []);
   const freccia = (linea, col) => {
     let tot = 0; const d = [];
     for (let i = 0; i + 1 < linea.length; i++) { d.push(metri(linea[i], linea[i + 1])); tot += d[i]; }
@@ -907,7 +938,8 @@ function disegnaGiro() {
       else { linea = [puntoT(ti), pk]; dritta = true; }
     } else {
       const contigua = (i === 0 && primaDellaZona(ti)) || (prev === ti - 1 && tappe[prev].zi === t.zi);
-      if (contigua && Array.isArray(t.percorso) && t.percorso.length >= 4) linea = decodPercorso(t.percorso);
+      if (prev >= 0 && inC.has(ti) && inC.has(prev)) linea = [puntoT(prev), puntoT(ti)];   // dentro il cortile: dritto
+      else if (contigua && Array.isArray(t.percorso) && t.percorso.length >= 4) linea = decodPercorso(t.percorso);
       else {
         const da = i === 0 ? puntoPark(t.zi) : (haCoord(prev) ? puntoT(prev) : null);
         if (!da) continue;
@@ -916,8 +948,9 @@ function disegnaGiro() {
     }
     const tr = trattoDi(ti), col = COL_TRATTI[(tr < 0 ? 0 : tr) % COL_TRATTI.length];
     const fatto = !ritorno && i <= S.pos, prossimo = i === S.pos + 1;
+    const nelC = !ritorno && prev >= 0 && inC.has(ti) && inC.has(prev);
     L.polyline(linea, {renderer: R, interactive: false, color: col, lineCap: 'round', lineJoin: 'round',
-      weight: prossimo ? 7 : (fatto ? 4 : 5), opacity: fatto ? 0.35 : 0.9,
+      weight: nelC ? (fatto ? 3 : 3.5) : (prossimo ? 7 : (fatto ? 4 : 5)), opacity: fatto ? 0.35 : 0.9,
       dashArray: ritorno ? '8 9' : (dritta ? '2 9' : null)}).addTo(g);
     if (!fatto) freccia(linea, col);
   }
@@ -926,13 +959,41 @@ function disegnaGiro() {
     L.marker(pk, {keyboard: false, zIndexOffset: 500, icon: L.divIcon({className: '', iconSize: [36, 36], iconAnchor: [64, 18], html: '<div class="m-park">🛵</div>'})})
       .on('click', () => toast('🛵 Parcheggio vicino a ' + (z.parcheggio.vicino_a || ''))).addTo(g);
   });
+  if (cq.length) disegnaCortile(cq, inC, g);
   ord.forEach((ti, i) => {
-    if (!haCoord(ti)) return;
+    if (!haCoord(ti) || inC.has(ti)) return;
     const qui = i === S.pos, sel = ti === selMappa, dim = qui ? 40 : 30;
     L.marker(puntoT(ti), {keyboard: false, zIndexOffset: qui ? 1000 : (sel ? 900 : 0),
       icon: L.divIcon({className: '', iconSize: [dim, dim],
         html: '<div class="m-t s-' + statoTappa(ti) + (qui ? ' qui' : '') + (sel ? ' sel' : '') + '">' + (i + 1) + '</div>'})})
       .on('click', () => scegliTappa(ti, false)).addTo(g);
+  });
+}
+
+/* Cortile: tutti i portoni del civico come puntini grigi (servono per orientarsi), i portoni con lettere
+   numerati nell'ordine del cortile, e un'etichetta sull'ultima consegna prima del cortile. */
+function disegnaCortile(cq, inC, g) {
+  const t0 = tappe[cq[0]], mie = cq.map(puntoT);
+  (t0.portoni_cortile || []).forEach(p => {
+    if (mie.some(q => metri(p, q) < 1.5)) return;
+    L.marker(p, {interactive: false, keyboard: false, icon: L.divIcon({className: '', iconSize: [0, 0], html: '<div class="m-puntino"></div>'})}).addTo(g);
+  });
+  const pr = primaDelCortile(cq);
+  if (pr >= 0 && haCoord(pr)) {
+    const ns = tappe[pr].buste.map(b => b.n);
+    L.marker(puntoT(pr), {interactive: false, keyboard: false, zIndexOffset: 800, icon: L.divIcon({className: '', iconSize: [0, 0],
+      html: '<div class="m-ultima">ultima consegna · N ' + esc(ns.length > 2 ? ns[0] + '…' : ns.join(', ')) + '</div>'})}).addTo(g);
+  }
+  if (!inC.size) return;
+  const k = Math.cos(mie[0][0] * Math.PI / 180);
+  cq.forEach((ti, j) => {   // l'etichetta va a destra; a sinistra o sopra se lì c'è un altro portone
+    const a = mie[j], vicino = dx => mie.some((b, h) => h !== j && Math.abs((b[0] - a[0]) * 111320) < 6 &&
+      (b[1] - a[1]) * 111320 * k * dx > 0 && Math.abs((b[1] - a[1]) * 111320 * k) < 16);
+    const lato = !vicino(1) ? '' : (!vicino(-1) ? ' sx' : ' su');
+    const st = statoTappa(ti), fin = st === 'fatta' || st === 'avvisi', qui = ti === S.ordine[S.pos], t = tappe[ti];
+    L.marker(a, {keyboard: false, zIndexOffset: qui ? 1000 : 600, icon: L.divIcon({className: '', iconSize: [0, 0],
+      html: '<div class="m-port s-' + st + (qui ? ' qui' : '') + lato + '"><span class="c">' + (fin ? '✓' : j + 1) + '</span>' +
+        '<span class="e">' + esc(t.interno || 'senza int.') + '</span></div>'})}).on('click', () => scegliTappa(ti, false)).addTo(g);
   });
 }
 

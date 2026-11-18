@@ -281,6 +281,23 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .m-via span { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 12.5px; font-weight: 600; color: #4F5A68;
   text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff; pointer-events: none; }
 .leaflet-control-attribution { font-size: 11px; }
+/* cortile: portoni interni */
+.m-puntino { width: 9px; height: 9px; border-radius: 50%; background: #97A1AD; border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+.m-port { position: relative; transform: translate(-50%, -50%); width: max-content; }
+.m-port .c { width: 26px; height: 26px; border-radius: 50%; background: var(--tono); color: #fff; font-size: 14px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(30,37,48,.3); }
+.m-port .e { position: absolute; top: 50%; left: calc(100% + 3px); transform: translateY(-50%); white-space: nowrap; background: rgba(255,255,255,.95);
+  color: var(--tono); font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 4px; line-height: 16px; border: 1px solid rgba(35,52,77,.14); }
+.m-port.sx .e { left: auto; right: calc(100% + 3px); }
+.m-port.su .e { top: auto; bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); }
+.m-port.qui .c { width: 32px; height: 32px; font-size: 17px; background: var(--accento); box-shadow: 0 0 0 4px rgba(70,110,160,.3), 0 1px 3px rgba(30,37,48,.3); }
+.m-port.qui .e { background: var(--accento); color: #fff; border-color: var(--accento); font-size: 13px; }
+.m-port.s-fatta .c { background: var(--verde); }
+.m-port.s-avvisi .c { background: var(--ambra); color: var(--ambra-t); }
+.m-port.s-fatta .e, .m-port.s-avvisi .e { opacity: .75; }
+.m-port.s-dasegnare .c, .m-port.s-rimandata .c { background: #fff; color: var(--grigio); border: 2px dashed var(--grigio); }
+.m-ultima { transform: translate(-14px, calc(-100% - 22px)); white-space: nowrap; font-size: 12px; font-weight: 800; color: var(--tono);
+  background: rgba(255,255,255,.95); border: 1.5px solid var(--tono); border-radius: 8px; padding: 1px 6px; width: max-content; }
 .m-lontano .m-t { transform: scale(.72); }
 .m-lontano .m-t.qui { transform: none; }
 
@@ -294,6 +311,19 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .indir .intr { display: inline-block; margin-top: 6px; padding: 3px 12px 4px; border-radius: 10px; background: var(--tono); color: #fff;
   font-size: 26px; font-weight: 800; line-height: 1.15; }
 .indir .intr b { font-size: 34px; font-weight: 900; }
+.indir .cort { display: block; margin-top: 6px; font-size: 16px; font-weight: 800; color: var(--accento); }
+.cort-tit { margin: 2px 2px 0; font-size: 16px; font-weight: 800; color: var(--tono); }
+.portone { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 16px; border: 1.5px solid rgba(35,52,77,.14); background: rgba(255,255,255,.35); }
+.portone.qui { border-color: var(--accento); background: rgba(255,255,255,.7); }
+.portone.s-fatta { border-color: rgba(14,138,69,.4); background: rgba(14,138,69,.12); }
+.portone.s-avvisi { border-color: rgba(245,165,36,.6); background: rgba(245,165,36,.16); }
+.p-testa { display: flex; align-items: center; gap: 8px; }
+.p-num { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; background: var(--tono); color: #fff; font-weight: 900; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+.portone.qui .p-num { background: var(--accento); }
+.portone.s-fatta .p-num { background: var(--verde); }
+.portone.s-avvisi .p-num { background: var(--ambra); color: var(--ambra-t); }
+.p-int { font-size: 20px; font-weight: 900; color: var(--tono); }
+.p-stato { margin-left: auto; font-size: 13px; font-weight: 800; color: var(--accento); }
 .indir .vai { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%;
   background: var(--tono); color: #fff; font-size: 28px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding-bottom: 4px; }
 .indir .lett { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
