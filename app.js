@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.4';
+const VERSIONE_APP = '1.5';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -119,6 +119,66 @@ function cortileDi(ti) {
   const k = tappe[ti] && tappe[ti].cortile; if (!k) return [];
   return S.ordine.filter(x => tappe[x].cortile === k);
 }
+
+/* Orario di fine stimato. Si calcola solo quando si disegna la schermata della tappa
+   (e una volta al minuto si cambia solo il testo): niente che ridisegni la pagina da solo. */
+const PASSO = 75;   // metri al minuto a piedi
+const MAX_GIRO = 14 * 3600e3;
+function minPerPalazzo() { const s = S.giro.stima; return s && s.min_per_palazzo > 0 ? s.min_per_palazzo : 2.2; }
+// quando è iniziato il giro: il primo esito segnato (per i giri caricati prima della 1.5, l'ora più vecchia segnata oggi)
+function inizioGiro() {
+  const ora = Date.now();
+  if (S.inizioTs && ora - S.inizioTs < MAX_GIRO) return S.inizioTs;
+  if (S.giro.data !== iso(new Date())) return 0;
+  let min = 0;
+  Object.keys(S.esiti || {}).forEach(n => {
+    const o = S.esiti[n].ora;
+    if (!/^\d\d:\d\d$/.test(o || '')) return;
+    const d = new Date(); d.setHours(+o.slice(0, 2), +o.slice(3), 0, 0);
+    const t = d.getTime();
+    if (t <= ora && (!min || t < min)) min = t;
+  });
+  return min;
+}
+// Tappe che mancano × minuti per palazzo + metri che mancano a 75 m/min,
+// corretto con il ritmo di oggi (pesa di più man mano che le tappe fatte aumentano).
+function stimaFine() {
+  if (!S.giro || !S.ordine.length) return null;
+  const p0 = minPerPalazzo();
+  let dN = 0, dM = 0, rN = 0, rM = 0;
+  S.ordine.forEach((ti, i) => {
+    const m = tappe[ti].metri_dalla_precedente || 0;
+    if (i < S.pos || tappaGestita(ti)) { dN++; dM += m; }
+    else { rN++; if (i > S.pos) rM += m; }   // alla tappa di adesso sei già arrivato
+  });
+  if (!rN) return null;
+  let ritmo = 1;
+  const i0 = inizioGiro();
+  if (i0 && dN >= 3) {
+    const passati = (Date.now() - i0) / 60000, previsti = dN * p0 + dM / PASSO;
+    if (passati > 10 && previsti > 0) {
+      const r = Math.min(1.8, Math.max(0.6, passati / previsti));
+      ritmo = 1 + (dN / (dN + 10)) * (r - 1);
+    }
+  }
+  return {min: (rN * p0 + rM / PASSO) * ritmo, iniziato: !!i0};
+}
+function testoFine() {
+  const s = stimaFine();
+  if (!s) return '';
+  if (!s.iniziato) {
+    const m = Math.round(s.min / 5) * 5;
+    return '🕐 giro di circa ' + Math.floor(m / 60) + ' h ' + due(m % 60);
+  }
+  const d = new Date(Math.round((Date.now() + s.min * 60000) / 300000) * 300000);
+  return '🕐 fine verso le ' + hhmm(d);
+}
+function aggiornaFine() {
+  const el = document.getElementById('fine');
+  if (el && S.giro) el.textContent = testoFine();
+}
+setInterval(() => { if (document.visibilityState === 'visible') aggiornaFine(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') aggiornaFine(); });
 
 function trattoDi(ti) {
   const tr = S.giro.tratti; if (!Array.isArray(tr)) return -1;
@@ -243,7 +303,8 @@ function pagTappa(nuova) {
   h += '<section class="pann"><div class="nav">' +
     '<button class="freccia" data-a="prec" aria-label="Tappa precedente"' + (S.pos === 0 ? ' disabled' : '') + '>‹</button>' +
     '<button class="quale" data-a="tappe">Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length +
-      '<small>' + fatte + ' di ' + tot + ' buste fatte' + (vicina ? ' · a ' + Math.round(t.metri_dalla_precedente / 10) * 10 + ' m' : '') + '</small></button>' +
+      '<small>' + fatte + ' di ' + tot + ' buste fatte' + (vicina ? ' · a ' + Math.round(t.metri_dalla_precedente / 10) * 10 + ' m' : '') + '</small>' +
+      '<small class="fine" id="fine">' + esc(testoFine()) + '</small></button>' +
     '<button class="freccia" data-a="succ" aria-label="Tappa successiva">›</button></div>' +
     '<div class="avanz"><i id="barra" style="transform:scaleX(' + (tot ? fatte / tot : 0) + ')"></i></div>' +
     (tr >= 0 && nTr > 1 ? '<div class="mazzo-m' + (nuovoPezzo ? ' nuovo' : '') + '">📦 ' +
@@ -678,6 +739,7 @@ function toast(testo, annulla) {
 function segna(n, esito, extra) {
   const prima = S.esiti[n] ? Object.assign({}, S.esiti[n]) : null;
   const ti = perN[n].ti, eraFinita = tappaFinita(ti);
+  S.inizioTs = inizioGiro() || Date.now();
   const r = {esito: esito, ora: hhmm(new Date())};
   if (prima && prima.nota) r.nota = prima.nota;
   Object.assign(r, extra || {});

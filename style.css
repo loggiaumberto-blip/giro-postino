@@ -347,6 +347,8 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .pann .freccia[disabled] { opacity: .3; }
 .pann .quale { flex: 1; min-height: 48px; text-align: center; font-size: 18px; font-weight: 800; color: var(--tono); line-height: 1.15; }
 .pann .quale small { display: block; font-size: 13px; font-weight: 600; color: var(--testo2); }
+.pann .quale small.fine { color: var(--accento); font-weight: 700; }
+.pann .quale small.fine:empty { display: none; }
 .pann .avanz { height: 6px; margin: 0 2px; }
 .pann .icone { display: flex; gap: 6px; }
 .pann .icone .neutro { min-height: 46px; padding: 4px 14px; }
