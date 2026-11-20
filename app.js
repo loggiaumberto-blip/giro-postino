@@ -121,47 +121,57 @@ function cortileDi(ti) {
 }
 
 /* Orario di fine stimato. Si calcola solo quando si disegna la schermata della tappa
-   (e una volta al minuto si cambia solo il testo): niente che ridisegni la pagina da solo. */
+   (e una volta al minuto si cambia solo il testo): niente che ridisegni la pagina da solo.
+   Pensato per chi segna gli esiti a blocchi: il tempo di ogni busta è quello del PRIMO segno
+   (anche "da segnare"), e la stima parte dall'ultima tappa segnata, non da "adesso". */
 const PASSO = 75;   // metri al minuto a piedi
-const MAX_GIRO = 14 * 3600e3;
 function minPerPalazzo() { const s = S.giro.stima; return s && s.min_per_palazzo > 0 ? s.min_per_palazzo : 2.2; }
-// quando è iniziato il giro: il primo esito segnato (per i giri caricati prima della 1.5, l'ora più vecchia segnata oggi)
-function inizioGiro() {
-  const ora = Date.now();
-  if (S.inizioTs && ora - S.inizioTs < MAX_GIRO) return S.inizioTs;
-  if (S.giro.data !== iso(new Date())) return 0;
-  let min = 0;
-  Object.keys(S.esiti || {}).forEach(n => {
-    const o = S.esiti[n].ora;
-    if (!/^\d\d:\d\d$/.test(o || '')) return;
-    const d = new Date(); d.setHours(+o.slice(0, 2), +o.slice(3), 0, 0);
-    const t = d.getTime();
-    if (t <= ora && (!min || t < min)) min = t;
-  });
-  return min;
+// se la busta era già segnata oggi si tiene il primo segno (vale anche per "da segnare" poi completata)
+const primaVolta = prima => (prima && prima.esito && tempoDi(prima)) || Date.now();
+// quando è stata segnata la busta la prima volta (solo se oggi); per gli esiti della 1.4 si usa l'ora scritta
+function tempoDi(r) {
+  if (!r.esito) return null;
+  const oggi = new Date(), adesso = oggi.getTime();
+  if (r.t1) return (new Date(r.t1).toDateString() === oggi.toDateString() && r.t1 <= adesso + 60000) ? r.t1 : null;
+  if (S.giro.data !== iso(oggi) || !/^\d\d:\d\d$/.test(r.ora || '')) return null;
+  const d = new Date(); d.setHours(+r.ora.slice(0, 2), +r.ora.slice(3), 0, 0);
+  return d.getTime() <= adesso + 60000 ? d.getTime() : null;
 }
-// Tappe che mancano × minuti per palazzo + metri che mancano a 75 m/min,
-// corretto con il ritmo di oggi (pesa di più man mano che le tappe fatte aumentano).
+// Tappe che mancano × minuti per palazzo + metri che mancano a 75 m/min, corretto con il ritmo di oggi.
 function stimaFine() {
   if (!S.giro || !S.ordine.length) return null;
   const p0 = minPerPalazzo();
-  let dN = 0, dM = 0, rN = 0, rM = 0;
+  let rN = 0, rM = 0;
+  const fatte = [];   // tappe con tutte le buste segnate oggi: {c: quando è stata finita, m: metri}
   S.ordine.forEach((ti, i) => {
-    const m = tappe[ti].metri_dalla_precedente || 0;
-    if (i < S.pos || tappaGestita(ti)) { dN++; dM += m; }
-    else { rN++; if (i > S.pos) rM += m; }   // alla tappa di adesso sei già arrivato
+    const t = tappe[ti], m = t.metri_dalla_precedente || 0;
+    if (tappaGestita(ti)) {
+      let c = 0, ok = true;
+      t.buste.forEach(b => { const x = tempoDi(rec(b.n)); if (x == null) ok = false; else if (x > c) c = x; });
+      if (ok && c) fatte.push({c: c, m: m});
+    } else if (i >= S.pos) { rN++; rM += m; }
   });
   if (!rN) return null;
+  const resto = rN * p0 + rM / PASSO;
+  if (!fatte.length) return {min: resto, iniziato: false};
+  fatte.sort((a, b) => a.c - b.c);
+  // il primo blocco segnato tutto insieme (tappe a meno di 1 minuto l'una dall'altra) non dice niente sul ritmo:
+  // quel lavoro è stato fatto prima del primo segno. Il ritmo si misura dalla fine di quel blocco.
+  let k = 1;
+  while (k < fatte.length && fatte[k].c - fatte[k - 1].c < 60000) k++;
+  const base = fatte[k - 1].c, ultimo = fatte[fatte.length - 1].c;
+  let n = 0, previsti = 0;
+  for (let i = k; i < fatte.length; i++) { n++; previsti += p0 + fatte[i].m / PASSO; }
+  const passati = (ultimo - base) / 60000;
   let ritmo = 1;
-  const i0 = inizioGiro();
-  if (i0 && dN >= 3) {
-    const passati = (Date.now() - i0) / 60000, previsti = dN * p0 + dM / PASSO;
-    if (passati > 10 && previsti > 0) {
-      const r = Math.min(1.8, Math.max(0.6, passati / previsti));
-      ritmo = 1 + (dN / (dN + 10)) * (r - 1);
-    }
+  if (n >= 3 && passati >= 10 && previsti > 0) {
+    const r = Math.min(1.8, Math.max(0.6, passati / previsti));
+    ritmo = 1 + (n / (n + 10)) * (r - 1);
   }
-  return {min: (rN * p0 + rM / PASSO) * ritmo, iniziato: !!i0};
+  // si parte dall'ultima tappa segnata: se cammini senza segnare la stima non cambia;
+  // se però passa tanto tempo senza segnare niente, l'orario comincia a spostarsi in avanti
+  const fine = Math.max(ultimo + resto * ritmo * 60000, Date.now() + resto * ritmo * 30000);
+  return {min: (fine - Date.now()) / 60000, iniziato: true, ritmo: ritmo};
 }
 function testoFine() {
   const s = stimaFine();
@@ -739,8 +749,7 @@ function toast(testo, annulla) {
 function segna(n, esito, extra) {
   const prima = S.esiti[n] ? Object.assign({}, S.esiti[n]) : null;
   const ti = perN[n].ti, eraFinita = tappaFinita(ti);
-  S.inizioTs = inizioGiro() || Date.now();
-  const r = {esito: esito, ora: hhmm(new Date())};
+  const r = {esito: esito, ora: hhmm(new Date()), t1: primaVolta(prima)};
   if (prima && prima.nota) r.nota = prima.nota;
   Object.assign(r, extra || {});
   S.esiti[n] = r; S.ultimo = {n: n, prima: prima}; S.esportato = false;
@@ -1206,7 +1215,7 @@ const AZIONI = {
   'ok-chiedi'() { const f = foglio.fai; foglio = null; disegnaSopra(); if (f) f(); },
   segnodopo() {
     const n = vista().n, prima = S.esiti[n] ? Object.assign({}, S.esiti[n]) : null;
-    S.esiti[n] = Object.assign({}, prima && prima.nota ? {nota: prima.nota} : {}, {esito: 'da_segnare'});
+    S.esiti[n] = Object.assign({}, prima && prima.nota ? {nota: prima.nota} : {}, {esito: 'da_segnare', t1: primaVolta(prima)});
     S.ultimo = {n: n, prima: prima}; S.esportato = false;
     S.pila.pop(); salva();
     dopo = () => { saltello(); toast('N ' + n + ' · da segnare dopo', true); };
@@ -1214,7 +1223,7 @@ const AZIONI = {
   },
   salta() {
     const t = tappaQui(); let k = 0;
-    t.buste.forEach(b => { if (!esitoDi(b.n)) { S.esiti[b.n] = Object.assign({}, rec(b.n), {esito: 'da_segnare'}); k++; } });
+    t.buste.forEach(b => { if (!esitoDi(b.n)) { S.esiti[b.n] = Object.assign({}, rec(b.n), {esito: 'da_segnare', t1: Date.now()}); k++; } });
     S.esportato = false;
     const ultima = S.pos === S.ordine.length - 1;
     if (!ultima) S.pos++;
