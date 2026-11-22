@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.5.2';
+const VERSIONE_APP = '1.6';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -163,10 +163,13 @@ function stimaFine() {
   let n = 0, previsti = 0;
   for (let i = k; i < fatte.length; i++) { n++; previsti += p0 + fatte[i].m / PASSO; }
   const passati = (ultimo - base) / 60000;
+  // miscela tra il ritmo di oggi e la media dei giorni passati (min_per_palazzo del file del giro):
+  // oggi pesa poco all'inizio e cresce con le tappe, ma al massimo 70% (idea di Umberto, 22/11):
+  // la media passata conta sempre almeno il 30%. Provato all'indietro sui giorni 17-20/11.
   let ritmo = 1;
   if (n >= 3 && passati >= 10 && previsti > 0) {
     const r = Math.min(1.8, Math.max(0.6, passati / previsti));
-    ritmo = 1 + (n / (n + 10)) * (r - 1);
+    ritmo = 1 + Math.min(0.7, n / (n + 10)) * (r - 1);
   }
   // si parte dall'ultima tappa segnata: se cammini senza segnare la stima non cambia;
   // se però passa tanto tempo senza segnare niente, l'orario comincia a spostarsi in avanti
@@ -898,7 +901,9 @@ function inquadraTappa() {
     return;
   }
   const pts = [puntoT(ti)], prev = S.pos > 0 ? S.ordine[S.pos - 1] : -1;
-  if (prev >= 0 && haCoord(prev)) pts.push(puntoT(prev));
+  const dopo = S.pos < S.ordine.length - 1 ? S.ordine[S.pos + 1] : -1;
+  if (tappaGestita(ti) && dopo >= 0 && haCoord(dopo)) pts.push(puntoT(dopo));   // tappa finita: si vede la strada verso la prossima
+  else if (prev >= 0 && haCoord(prev)) pts.push(puntoT(prev));
   else if (prev < 0) { const pk = puntoPark(tappe[ti].zi); if (pk) pts.push(pk); }
   if (pts.length > 1 && metri(pts[0], pts[1]) > 25) M.map.fitBounds(pts, {padding: [44, 44], maxZoom: 18, animate: false});
   else M.map.setView(pts[0], 18, {animate: false});
@@ -986,17 +991,24 @@ function disegnaGiro() {
   const g = M.giro, R = M.rGiro, ord = S.ordine;
   g.clearLayers(); M.frecce.clearLayers();
   const cq = cortileDi(ord[S.pos]).filter(haCoord), inC = new Set(cq.length > 1 ? cq : []);
-  const freccia = (linea, col) => {
+  // frecce di direzione: una a metà strada; sulla strada da fare adesso una ogni ~55 m
+  const freccia = (linea, col, ogni) => {
     let tot = 0; const d = [];
     for (let i = 0; i + 1 < linea.length; i++) { d.push(metri(linea[i], linea[i + 1])); tot += d[i]; }
     if (tot < 45) return;
-    let s = 0, i = 0;
-    while (i < d.length - 1 && s + d[i] < tot / 2) { s += d[i]; i++; }
-    const a = linea[i], b = linea[i + 1], f = d[i] ? (tot / 2 - s) / d[i] : 0;
-    const c = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
-    L.marker(c, {interactive: false, keyboard: false, icon: L.divIcon({className: 'm-freccia', iconSize: [16, 16],
-      html: '<svg viewBox="0 0 10 10" style="transform:rotate(' + angolo(a, b).toFixed(0) + 'deg)"><path d="M1.5 1 L9 5 L1.5 9 L3.5 5 Z" fill="' + col + '" stroke="#fff" stroke-width="1"/></svg>'})}).addTo(M.frecce);
+    const quante = ogni ? Math.max(1, Math.round(tot / ogni)) : 1, dim = ogni ? 20 : 16;
+    for (let q = 0; q < quante; q++) {
+      const pos = tot * (q + 0.5) / quante;
+      let s = 0, i = 0;
+      while (i < d.length - 1 && s + d[i] < pos) { s += d[i]; i++; }
+      const a = linea[i], b = linea[i + 1], f = d[i] ? (pos - s) / d[i] : 0;
+      const c = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+      L.marker(c, {interactive: false, keyboard: false, zIndexOffset: ogni ? 300 : 0, icon: L.divIcon({className: 'm-freccia', iconSize: [dim, dim],
+        html: '<svg viewBox="0 0 10 10" style="width:' + dim + 'px;height:' + dim + 'px;transform:rotate(' + angolo(a, b).toFixed(0) + 'deg)"><path d="M1.5 1 L9 5 L1.5 9 L3.5 5 Z" fill="' + col + '" stroke="#fff" stroke-width="1"/></svg>'})}).addTo(M.frecce);
+    }
   };
+  let daFare = null;   // la strada verso la tappa di adesso: si disegna per ultima, sopra le altre
+  const att = (S.pos < ord.length - 1 && tappaGestita(ord[S.pos])) ? S.pos + 1 : S.pos;
   for (let i = 0; i <= ord.length; i++) {
     const ritorno = i === ord.length;
     const ti = ritorno ? ord[i - 1] : ord[i], prev = i > 0 ? ord[i - 1] : -1;
@@ -1018,12 +1030,30 @@ function disegnaGiro() {
       }
     }
     const tr = trattoDi(ti), col = COL_TRATTI[(tr < 0 ? 0 : tr) % COL_TRATTI.length];
-    const fatto = !ritorno && i <= S.pos, prossimo = i === S.pos + 1;
+    // la tappa di adesso è S.pos: la strada che ci arriva (i === S.pos) è quella da fare ora;
+    // fino alla 1.5.2 era disegnata come "già fatta" (chiara) e la più marcata era quella dopo
+    // (se la tappa di adesso è già tutta segnata, la strada da fare è quella verso la tappa dopo)
+    const fatto = !ritorno && i < att, ora = !ritorno && i === att;
     const nelC = !ritorno && prev >= 0 && inC.has(ti) && inC.has(prev);
+    if (ora) { daFare = {linea: linea, dritta: dritta, nelC: nelC, prev: prev}; continue; }
     L.polyline(linea, {renderer: R, interactive: false, color: col, lineCap: 'round', lineJoin: 'round',
-      weight: nelC ? (fatto ? 3 : 3.5) : (prossimo ? 7 : (fatto ? 4 : 5)), opacity: fatto ? 0.35 : 0.9,
+      weight: nelC ? 3 : (fatto ? 4 : 5), opacity: fatto ? 0.3 : 0.75,
       dashArray: ritorno ? '8 9' : (dritta ? '2 9' : null)}).addTo(g);
     if (!fatto) freccia(linea, col);
+  }
+  if (daFare) {   // blu scuro, spessa, con il bordo bianco e più frecce
+    const v = daFare, w = v.nelC ? 5 : 8;
+    L.polyline(v.linea, {renderer: R, interactive: false, color: '#FFFFFF', lineCap: 'round', lineJoin: 'round',
+      weight: w + 5, opacity: 0.95, dashArray: null}).addTo(g);
+    L.polyline(v.linea, {renderer: R, interactive: false, color: '#23344D', lineCap: 'round', lineJoin: 'round',
+      weight: w, opacity: 1, dashArray: v.dritta ? '1 ' + (w + 6) : null}).addTo(g);
+    freccia(v.linea, '#23344D', 55);
+    // punto di riferimento sicuro: da dove si parte (la tappa prima). Nei cortili c'è già "ultima consegna".
+    if (v.prev >= 0 && haCoord(v.prev) && !cq.length && metri(puntoT(v.prev), puntoT(ord[att])) > 25) {
+      const ns = tappe[v.prev].buste.map(b => b.n);
+      L.marker(puntoT(v.prev), {interactive: false, keyboard: false, zIndexOffset: 800, icon: L.divIcon({className: '', iconSize: [0, 0],
+        html: '<div class="m-ultima">parti da qui · N ' + esc(ns.length > 2 ? ns[0] + '…' : ns.join(', ')) + '</div>'})}).addTo(g);
+    }
   }
   S.giro.zone.forEach((z, zi) => {
     const pk = puntoPark(zi); if (!pk) return;
