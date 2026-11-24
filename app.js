@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.7';
+const VERSIONE_APP = '1.8';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -272,6 +272,7 @@ function disegna() {
   $app.hidden = conMappa;
   $app.classList.toggle('vista-tappa', !!S.giro && v.s === 'tappa');
   document.documentElement.classList.toggle('fisso', conMappa || (!!S.giro && v.s === 'tappa'));
+  if (bussola && !(S.giro && v.s === 'tappa')) spegniBussola(false);
   if (conMappa) mostraMappa(nuova); else nascondiMappa();
   const y = window.scrollY;
   $app.innerHTML = h;
@@ -333,6 +334,10 @@ function pagTappa(nuova) {
     (tappaFinita(t.ti) ? '<span class="ok-chip">✓ fatta</span>' : (rim ? '<span class="etichetta">↪ rimandata</span>' : '')) + '</span>' +
     '<span class="vai" aria-hidden="true">›</span></button>';
   h += '<div class="t-mappa" id="posto-mappa"><button class="t-tocca" data-a="mappa" aria-label="Apri la mappa a tutto schermo"></button>' +
+    '<div class="t-dir" id="t-dir" hidden></div>' +
+    '<button class="t-bussola' + (bussola ? ' on' : '') + '" data-a="bussola" aria-label="Bussola: la mappa gira con il telefono">' +
+      '<svg id="t-ago" viewBox="0 0 24 24"><path d="M12 2 L16 12 L8 12 Z" fill="#DC2F3C"/><path d="M12 22 L8 12 L16 12 Z" fill="#9AA6B5"/><text x="12" y="10.2" text-anchor="middle" font-size="5.5" font-weight="900" fill="#fff">N</text></svg></button>' +
+    '<span class="t-attr">© OpenStreetMap</span>' +
     '<span class="ingrandisci">⤢ tocca per ingrandire</span></div>';
   h += '<section class="pann"><div class="nav">' +
     '<button class="freccia" data-a="prec" aria-label="Tappa precedente"' + (S.pos === 0 ? ' disabled' : '') + '>‹</button>' +
@@ -880,6 +885,8 @@ function statoTappa(ti) {
 
 function mostraMappa(nuova) {
   $mappa.hidden = false;
+  spegniBussola(false);
+  if (M && M.pad) { $carta.style.cssText = ''; M.pad = 0; M.rot = 0; nomiDritti(0); chiaveRot = ''; }   // a tutto schermo il nord è in alto
   if (nuova || selMappa < 0 || !tappe[selMappa]) selMappa = S.ordine[S.pos];
   schedaMappa();
   preparaMappa().then(zona => {
@@ -909,7 +916,7 @@ function mostraMini() {
     if (!M) creaMappa(zona);
     M.map.invalidateSize();
     disegnaGiro();
-    inquadraTappa();
+    orientaMini();
   }, () => { posto.classList.add('senza'); });
 }
 function inquadraTappa() {
@@ -927,9 +934,203 @@ function inquadraTappa() {
   if (tappaGestita(ti) && dopo >= 0 && haCoord(dopo)) pts.push(puntoT(dopo));   // tappa finita: si vede la strada verso la prossima
   else if (prev >= 0 && haCoord(prev)) pts.push(puntoT(prev));
   else if (prev < 0) { const pk = puntoPark(tappe[ti].zi); if (pk) pts.push(pk); }
-  if (pts.length > 1 && metri(pts[0], pts[1]) > 25) M.map.fitBounds(pts, {padding: [44, 44], maxZoom: 18, animate: false});
+  const pad = M.pad || 44;   // mappa girata: i punti stanno nel cerchio che resta sempre visibile
+  if (pts.length > 1 && metri(pts[0], pts[1]) > 25) M.map.fitBounds(pts, {padding: [pad, pad], maxZoom: 18, animate: false});
   else M.map.setView(pts[0], 18, {animate: false});
 }
+
+/* ================= mappa piccola girata (1.8) =================
+   "Appena uscito dal portone": in alto c'è la strada come la vedi uscendo dal portone della tappa prima
+   (dal punto del civico alla strada più vicina con lo stesso nome), così la sinistra della mappa è la tua sinistra.
+   In più la scritta "⬅ a sinistra · 120 m". Niente sensori: si calcola una volta, quando cambia la tappa.
+   Bussola 🧭: solo a richiesta, la mappa gira con il telefono per un minuto, poi si spegne da sola. */
+const direzione = (a, b) => (angolo(a, b) + 450) % 360;   // gradi in senso orario dal nord
+const giroAng = x => ((x % 360) + 540) % 360 - 180;       // in -180…180
+function lungo(l) { let s = 0; for (let i = 0; i + 1 < l.length; i++) s += metri(l[i], l[i + 1]); return s; }
+function puntoLungo(l, s) {   // il punto a s metri dall'inizio della linea
+  for (let i = 0; i + 1 < l.length; i++) {
+    const d = metri(l[i], l[i + 1]);
+    if (s <= d) { const f = d ? s / d : 0; return [l[i][0] + (l[i + 1][0] - l[i][0]) * f, l[i][1] + (l[i + 1][1] - l[i][1]) * f]; }
+    s -= d;
+  }
+  return l[l.length - 1];
+}
+const TIPI_VIA = ['via', 'corso', 'piazza', 'largo', 'viale', 'vicolo', 'piazzetta', 'strada', 'galleria', 'lungo'];
+const PAROLE_VUOTE = ['s', 'san', 'santa', 'santo', 'sant', 'de', 'di', 'del', 'della', 'dell', 'dei', 'degli', 'delle', 'd', 'l'];
+function paroleVia(nome) {
+  const w = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/c\.so/g, 'corso')
+    .split(/[^a-z0-9]+/).filter(Boolean);
+  const tipo = TIPI_VIA.indexOf(w[0]) >= 0 ? w.shift() : '';
+  return {tipo: tipo, p: w.filter(x => PAROLE_VUOTE.indexOf(x) < 0 && TIPI_VIA.indexOf(x) < 0)};
+}
+function stessaVia(a, b) {
+  if (!a.p.length || !b.p.length || (a.tipo && b.tipo && a.tipo !== b.tipo)) return false;
+  return a.p.every(x => b.p.indexOf(x) >= 0) || b.p.every(x => a.p.indexOf(x) >= 0);
+}
+function preparaVie() {   // le strade della mappa offline, una volta sola
+  if (M.vie || !M.zona) return;
+  const z = M.zona;
+  M.nomiVia = (z.nomi || []).map(paroleVia);
+  M.vie = (z.strade || []).map(s => {
+    const p = scalini(s, 2, z.o);
+    let a = 90, b = -90, c = 180, d = -180;
+    p.forEach(q => { a = Math.min(a, q[0]); b = Math.max(b, q[0]); c = Math.min(c, q[1]); d = Math.max(d, q[1]); });
+    return {c: s[0], n: s[1], p: p, box: [a, b, c, d]};
+  });
+}
+/* il punto della strada davanti al portone: prima la strada con lo stesso nome (entro 70 m), poi la più vicina */
+function stradaDavanti(D, nomeVia) {
+  preparaVie(); if (!M.vie) return null;
+  const k = Math.cos(D[0] * Math.PI / 180), mx = 111320 * k, my = 111320, cerca = paroleVia(nomeVia);
+  const ok = {}, best = {d: 1e9}, bestNome = {d: 1e9};
+  M.vie.forEach(v => {
+    if (v.box[1] < D[0] - 0.0008 || v.box[0] > D[0] + 0.0008 || v.box[3] < D[1] - 0.0011 || v.box[2] > D[1] + 0.0011) return;
+    let nome = false;
+    if (v.c > 3) return;   // niente marciapiedi e vialetti: spesso hanno il nome della via ma stanno attaccati al palazzo
+    if (v.n >= 0) { if (!(v.n in ok)) ok[v.n] = stessaVia(cerca, M.nomiVia[v.n] || {p: []}); nome = ok[v.n]; }
+    for (let i = 0; i + 1 < v.p.length; i++) {
+      const ax = (v.p[i][1] - D[1]) * mx, ay = (v.p[i][0] - D[0]) * my, bx = (v.p[i + 1][1] - D[1]) * mx, by = (v.p[i + 1][0] - D[0]) * my;
+      const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+      const f = l2 ? Math.max(0, Math.min(1, -(ax * vx + ay * vy) / l2)) : 0;
+      const px = ax + vx * f, py = ay + vy * f, d = Math.hypot(px, py);
+      const r = {d: d, P: [D[0] + py / my, D[1] + px / mx], seg: (Math.atan2(vx, vy) * 180 / Math.PI + 360) % 360};
+      if (nome && d < bestNome.d) Object.assign(bestNome, r);
+      if (d < best.d) Object.assign(best, r);
+    }
+  });
+  const r = bestNome.d <= 70 ? bestNome : (best.d <= 70 ? best : null);
+  if (!r || r.d < 2) return null;
+  // si guarda la strada di fronte: perpendicolare alla strada, dal lato del palazzo
+  const verso = direzione(D, r.P), a = (r.seg + 90) % 360, b = (r.seg + 270) % 360;
+  r.F = Math.abs(giroAng(a - verso)) <= Math.abs(giroAng(b - verso)) ? a : b;
+  return r;
+}
+/* che cosa mettere in alto sulla mappa piccola: {rot, tipo: 'portone'|'percorso'|'scooter', lato, metri, D, P} oppure null */
+function orientamento() {
+  const v = M && M.daFare;
+  if (!v || v.cortile || !haCoord(v.to)) return null;
+  const linea = v.linea, tot = lungo(linea), arrivo = puntoT(v.to);
+  const m = Math.max(10, Math.round(tot / 10) * 10);
+  if (v.prev < 0 || !haCoord(v.prev)) {   // si parte dallo scooter
+    const pk = linea[0];
+    if (!pk || metri(pk, arrivo) < 15) return null;
+    return {rot: direzione(pk, tot > 50 ? puntoLungo(linea, 50) : arrivo), tipo: 'scooter', metri: m};
+  }
+  const D = puntoT(v.prev);
+  if (metri(D, arrivo) < 8) return null;   // stesso portone
+  const t = tappe[v.prev];
+  const s = t.interno ? null : stradaDavanti(D, t.via || viaCivico(t).via);
+  if (!s) return {rot: direzione(D, tot > 50 ? puntoLungo(linea, 50) : arrivo), tipo: 'percorso', metri: m};
+  // dove porta la strada: dal punto davanti al portone al punto a ~40 m lungo il percorso
+  let b = tot > 15 ? puntoLungo(linea, Math.min(40, tot)) : arrivo;
+  if (metri(s.P, b) < 8) b = arrivo;
+  const rel = giroAng(direzione(s.P, b) - s.F);
+  const lato = Math.abs(rel) < 35 ? 'dritto' : (rel >= 35 && rel <= 145 ? 'destra' : (rel <= -35 && rel >= -145 ? 'sinistra' : ''));
+  // la tappa dopo è sulla stessa via ma dall'altra parte (oltre la mezzeria, guardando dal portone)?
+  const t2 = tappe[v.to], fr = s.F * Math.PI / 180;
+  const oltre = ((arrivo[1] - s.P[1]) * 111320 * Math.cos(s.P[0] * Math.PI / 180)) * Math.sin(fr) + ((arrivo[0] - s.P[0]) * 111320) * Math.cos(fr);
+  const attraversa = lato !== 'dritto' && oltre > 3 && metri(D, arrivo) < 250 &&
+    stessaVia(paroleVia(t.via || viaCivico(t).via), paroleVia(t2.via || viaCivico(t2).via));
+  return {rot: s.F, tipo: 'portone', lato: lato, attraversa: attraversa, metri: m, D: D, P: s.P};
+}
+let bussola = null;    // {f, ev, h, raf, t1, t2, arrivato}
+let chiaveRot = '';    // la tappa per cui è stata girata la mappa (per animare solo quando cambia)
+/* allarga la mappa piccola (quadrato grande quanto la diagonale) così girandola non restano angoli vuoti */
+function allargaMini(on) {
+  const posto = document.getElementById('posto-mappa'); if (!posto || $carta.parentNode !== posto) return false;
+  const w = posto.clientWidth, h = posto.clientHeight;
+  if (on) {
+    const D = Math.ceil(Math.hypot(w, h)) + 4;
+    $carta.style.cssText = 'inset:auto;left:' + Math.round((w - D) / 2) + 'px;top:' + Math.round((h - D) / 2) + 'px;width:' + D + 'px;height:' + D + 'px;transform:rotate(' + (M.rot || 0) + 'deg)';
+    M.pad = Math.max(44, Math.round((D - (Math.min(w, h) - 60) / Math.SQRT2) / 2));
+  } else { $carta.style.cssText = ''; M.pad = 0; M.rot = 0; }
+  posto.classList.toggle('ruota', on);
+  M.map.invalidateSize({pan: false});
+  return true;
+}
+/* gira la mappa: in alto la direzione "su" (gradi dal nord). Solo il disegno, niente ricalcoli. */
+function ruotaMini(su, anima) {
+  const posto = document.getElementById('posto-mappa'); if (!posto) return;
+  let a = -su; const prima = M.rot || 0;
+  a = prima + giroAng(a - prima);   // il giro più corto
+  if (anima && animOn() && Math.abs(a - prima) > 3 && $carta.animate)
+    $carta.animate([{transform: 'rotate(' + prima + 'deg)'}, {transform: 'rotate(' + a + 'deg)'}], {duration: 500, easing: 'ease-out'});
+  $carta.style.transform = 'rotate(' + a + 'deg)';
+  M.rot = a;
+  posto.style.setProperty('--contro', (-a) + 'deg');   // numeri e scritte restano dritti
+  const ago = document.getElementById('t-ago'); if (ago) ago.style.transform = 'rotate(' + a + 'deg)';
+  nomiDritti(a);
+}
+function nomiDritti(a) {   // i nomi delle vie seguono la strada ma non vanno mai a testa in giù
+  if (!M || !M.nomi) return;
+  M.nomi.eachLayer(mk => {
+    const o = mk.options, giu = Math.abs(giroAng(o.ang + a)) > 90;
+    if (!!o.giu === giu) return;
+    o.giu = giu; mk.setIcon(iconaVia(o.nome, o.ang + (giu ? 180 : 0)));
+  });
+}
+function orientaMini() {
+  const posto = document.getElementById('posto-mappa'), dir = document.getElementById('t-dir');
+  if (!posto || !M) return;
+  const O = bussola ? null : orientamento();
+  const chiave = S.pos + ':' + (M.daFare ? M.daFare.to : '');
+  const on = !!bussola || !!O;
+  if (!on && posto.classList.contains('ruota')) nomiDritti(0);
+  allargaMini(on);
+  inquadraTappa();
+  if (O) {
+    ruotaMini(O.rot, chiave !== chiaveRot);
+    if (O.tipo === 'portone') {   // freccina sul marciapiede: da qui esci, guardando in alto
+      const c = [(O.D[0] + O.P[0] * 2) / 3, (O.D[1] + O.P[1] * 2) / 3];
+      L.marker(c, {interactive: false, keyboard: false, zIndexOffset: 700, icon: L.divIcon({className: 'm-freccia m-esci', iconSize: [26, 26],
+        html: '<svg viewBox="0 0 10 10" style="transform:rotate(' + (O.rot - 90).toFixed(0) + 'deg)"><path d="M1.5 1 L9 5 L1.5 9 L3.5 5 Z" fill="#2463EB" stroke="#fff" stroke-width="1"/></svg>'})}).addTo(M.giro);
+    }
+  } else if (!bussola) { posto.style.removeProperty('--contro'); const ago = document.getElementById('t-ago'); if (ago) ago.style.transform = ''; }
+  chiaveRot = chiave;
+  if (!dir) return;
+  let h = '';
+  if (bussola) h = '🧭 La mappa gira con il telefono';
+  else if (O && O.tipo === 'portone') {
+    const L_ = {sinistra: ['←', 'a sinistra'], destra: ['→', 'a destra'], dritto: ['↑', 'attraversa']}[O.lato];
+    h = L_ ? '<span class="fr">' + L_[0] + '</span><span>Uscito dal portone: <b>' + L_[1] + '</b>' +
+        (O.attraversa ? ' e <b>attraversa</b>' : '') + ' · ' + O.metri + ' m</span>'
+      : '<span class="fr">↑</span><span>In alto la strada davanti al portone · ' + O.metri + ' m</span>';
+  } else if (O && O.tipo === 'scooter') h = '<span class="fr">🛵</span><span>Dallo scooter: la strada va <b>in alto</b></span>';
+  else if (O) h = '<span class="fr">↑</span><span>La strada da fare va <b>in alto</b> · ' + O.metri + ' m</span>';
+  dir.innerHTML = h; dir.hidden = !h;
+  dir.classList.toggle('bus', !!bussola);
+}
+function accendiBussola() {
+  if (bussola) { spegniBussola(true); return; }
+  if (!M) return;
+  const ev = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+  const b = bussola = {ev: ev, h: null, raf: 0, arrivato: false};
+  b.f = e => {
+    let h = null;
+    if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+    else if ((ev === 'deviceorientationabsolute' || e.absolute) && typeof e.alpha === 'number') h = 360 - e.alpha;
+    if (h == null || bussola !== b) return;
+    h += (screen.orientation && screen.orientation.angle) || 0;
+    b.arrivato = true;
+    b.h = b.h == null ? h : b.h + giroAng(h - b.h) * 0.25;   // ammorbidito: niente tremolio
+    if (!b.raf) b.raf = requestAnimationFrame(() => { b.raf = 0; if (bussola === b) ruotaMini(b.h, false); });
+  };
+  window.addEventListener(ev, b.f);
+  b.t1 = setTimeout(() => { if (bussola === b && !b.arrivato) { spegniBussola(true); toast('La bussola non risponde su questo telefono'); } }, 2500);
+  b.t2 = setTimeout(() => { if (bussola === b) spegniBussola(true); }, 60000);
+  const bt = document.querySelector('.t-bussola'); if (bt) bt.classList.add('on');
+  vibra();
+  orientaMini();
+}
+function spegniBussola(torna) {
+  const b = bussola; if (!b) return;
+  bussola = null;
+  window.removeEventListener(b.ev, b.f);
+  clearTimeout(b.t1); clearTimeout(b.t2); if (b.raf) cancelAnimationFrame(b.raf);
+  const bt = document.querySelector('.t-bussola'); if (bt) bt.classList.remove('on');
+  if (torna && M && vista().s === 'tappa') { chiaveRot = ''; orientaMini(); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') spegniBussola(false); });
 
 function creaMappa(zona) {
   const pts = tappe.filter((t, ti) => haCoord(ti)).map(t => [t.lat, t.lon]);
@@ -939,7 +1140,7 @@ function creaMappa(zona) {
     maxBounds: lim.pad(0.15), maxBoundsViscosity: 0.8, fadeAnimation: false, markerZoomAnimation: animOn(), zoomAnimation: animOn()});
   map.attributionControl.setPrefix(false).addAttribution('© OpenStreetMap');
   map.setView(haCoord(selMappa) ? puntoT(selMappa) : lim.getCenter(), 17);
-  M = {map: map, strati: null, gps: null,
+  M = {map: map, strati: null, gps: null, zona: zona,
     rGiro: L.canvas({padding: 0.4}),
     giro: L.layerGroup().addTo(map), frecce: L.layerGroup(), nomi: L.layerGroup()};
   if (zona) disegnaBase(zona);
@@ -947,6 +1148,10 @@ function creaMappa(zona) {
   zoomMappa();
 }
 
+function iconaVia(nome, ang) {
+  return L.divIcon({className: 'm-via', iconSize: [0, 0],
+    html: '<span style="transform:translate(-50%,-50%) rotate(' + ang.toFixed(0) + 'deg)">' + esc(nome) + '</span>'});
+}
 function disegnaBase(z) {
   const o = z.o, R = L.canvas({padding: 0.4}), map = M.map;
   const anelli = lista => lista.map(a => [scalini(a, 0, o)]);
@@ -978,8 +1183,7 @@ function disegnaBase(z) {
     if (l.some(q => metri(q, c) < 300)) return;
     l.push(c);
     let ang = angolo(a, b); if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
-    L.marker(c, {interactive: false, keyboard: false, icon: L.divIcon({className: 'm-via', iconSize: [0, 0],
-      html: '<span style="transform:translate(-50%,-50%) rotate(' + ang.toFixed(0) + 'deg)">' + esc(z.nomi[s[1]]) + '</span>'})}).addTo(M.nomi);
+    L.marker(c, {interactive: false, keyboard: false, ang: ang, nome: z.nomi[s[1]], icon: iconaVia(z.nomi[s[1]], ang)}).addTo(M.nomi);
   });
 }
 
@@ -1011,7 +1215,7 @@ function primaDelCortile(cq) {   // la tappa fatta subito prima di entrare nel c
 }
 function disegnaGiro() {
   const g = M.giro, R = M.rGiro, ord = S.ordine;
-  g.clearLayers(); M.frecce.clearLayers();
+  g.clearLayers(); M.frecce.clearLayers(); M.daFare = null;
   const cq = cortileDi(ord[S.pos]).filter(haCoord), inC = new Set(cq.length > 1 ? cq : []);
   // frecce di direzione: una a metà strada; sulla strada da fare adesso una ogni ~55 m
   const freccia = (linea, col, ogni) => {
@@ -1074,6 +1278,7 @@ function disegnaGiro() {
   }
   if (daFare) {   // blu scuro, spessa, con il bordo bianco e più frecce
     const v = daFare, w = v.nelC ? 5 : 8;
+    M.daFare = {linea: v.linea, prev: v.prev, to: ord[att], cortile: cq.length > 0};   // serve a girare la mappa piccola
     L.polyline(v.linea, {renderer: R, interactive: false, color: '#FFFFFF', lineCap: 'round', lineJoin: 'round',
       weight: w + 5, opacity: 0.95, dashArray: null}).addTo(g);
     L.polyline(v.linea, {renderer: R, interactive: false, color: '#23344D', lineCap: 'round', lineJoin: 'round',
@@ -1233,6 +1438,7 @@ const AZIONI = {
   velo(el, ev) { if (ev.target === el) chiudiFoglio(); },
   chiudifoglio() { chiudiFoglio(); },
   menu() { apriFoglio({tipo: 'menu'}); },
+  bussola() { accendiBussola(); },
   dasegnare() { apri({s: 'dasegnare'}); },
   cerca() { apri({s: 'cerca', q: ''}); },
   tappe() { foglio = null; apri({s: 'tappe'}); },

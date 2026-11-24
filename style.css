@@ -488,3 +488,25 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 /* data di oggi sotto AVVISO sulla busta */
 .carta .su .mano.dt { font-size: 22px; color: #1F3C9C; }
 .busta-m .su .mano.dt { font-size: 24px; }
+
+/* ---------- mappa piccola girata e bussola (1.8) ---------- */
+.t-mappa.ruota .leaflet-control-container { display: none; }
+/* numeri, etichette e scooter restano dritti; frecce e nomi delle vie girano con la mappa */
+/* (si gira il contenuto dell'icona, non l'icona: Leaflet la posiziona con transform e la sposterebbe) */
+.t-mappa.ruota .leaflet-marker-icon:not(.m-freccia):not(.m-via) > * { rotate: var(--contro, 0deg); }
+.t-mappa.ruota .m-ultima, .t-mappa.ruota .m-port, .t-mappa.ruota .m-puntino { transform-origin: 0 0; }
+.t-attr { display: none; position: absolute; right: 6px; bottom: 4px; z-index: 901; font-size: 10px; color: var(--testo2);
+  background: rgba(255,255,255,.75); padding: 0 4px; border-radius: 4px; pointer-events: none; }
+.t-mappa.ruota .t-attr { display: block; }
+.t-dir { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 70px); z-index: 901; pointer-events: none;
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px 6px 10px; border-radius: 14px; background: var(--tono); color: #fff;
+  font-size: 15px; font-weight: 600; line-height: 1.2; box-shadow: 0 2px 6px rgba(30,37,48,.3); }
+.t-dir .fr { font-size: 30px; font-weight: 900; line-height: 1; flex: 0 0 auto; }
+.t-dir b { font-weight: 900; font-size: 18px; white-space: nowrap; }
+.t-dir.bus { background: rgba(255,255,255,.95); color: var(--tono); border: 1.5px solid var(--tono); font-weight: 800; }
+.t-bussola { position: absolute; right: 8px; top: 8px; z-index: 902; width: 48px; height: 48px; border-radius: 50%;
+  background: rgba(255,255,255,.92); border: 1.5px solid var(--bordo); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgba(30,37,48,.25); }
+.t-bussola svg { width: 34px; height: 34px; display: block; }
+.t-bussola.on { background: #fff; border: 3px solid var(--tono); box-shadow: 0 0 0 4px rgba(70,110,160,.3); }
+.m-esci svg { width: 26px; height: 26px; display: block; }
