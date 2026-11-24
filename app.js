@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.6.1';
+const VERSIONE_APP = '1.7';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -138,31 +138,38 @@ function tempoDi(r) {
   return d.getTime() <= adesso + 60000 ? d.getTime() : null;
 }
 // Tappe che mancano × minuti per palazzo + metri che mancano a 75 m/min, corretto con il ritmo di oggi.
+// Giro con più soste dello scooter (es. 25/11: pausa a metà giornata): finché non si è nell'ultima sosta
+// la stima dice quando si torna allo scooter di questa sosta, non la fine del giro.
+function zonaQui() { const ti = S.ordine[Math.min(S.pos, S.ordine.length - 1)]; return tappe[ti] ? tappe[ti].zi : 0; }
 function stimaFine() {
   if (!S.giro || !S.ordine.length) return null;
-  const p0 = minPerPalazzo();
+  const p0 = minPerPalazzo(), zq = zonaQui(), soloSosta = zq < S.giro.zone.length - 1;
   let rN = 0, rM = 0;
-  const fatte = [];   // tappe con tutte le buste segnate oggi: {c: quando è stata finita, m: metri}
+  const fatte = [];   // tappe con tutte le buste segnate oggi: {c: quando è stata finita, m: metri, z: sosta}
   S.ordine.forEach((ti, i) => {
     const t = tappe[ti], m = t.metri_dalla_precedente || 0;
     if (tappaGestita(ti)) {
       let c = 0, ok = true;
       t.buste.forEach(b => { const x = tempoDi(rec(b.n)); if (x == null) ok = false; else if (x > c) c = x; });
-      if (ok && c) fatte.push({c: c, m: m});
-    } else if (i >= S.pos) { rN++; rM += m; }
+      if (ok && c) fatte.push({c: c, m: m, z: t.zi});
+    } else if (i >= S.pos && (!soloSosta || t.zi === zq)) { rN++; rM += m; }
   });
   if (!rN) return null;
+  if (soloSosta) rM += S.giro.zone[zq].ritorno_al_parcheggio_m || 0;
   const resto = rN * p0 + rM / PASSO;
-  if (!fatte.length) return {min: resto, iniziato: false};
+  if (!fatte.length) return {min: resto, iniziato: false, scooter: soloSosta};
   fatte.sort((a, b) => a.c - b.c);
   // il primo blocco segnato tutto insieme (tappe a meno di 1 minuto l'una dall'altra) non dice niente sul ritmo:
   // quel lavoro è stato fatto prima del primo segno. Il ritmo si misura dalla fine di quel blocco.
   let k = 1;
   while (k < fatte.length && fatte[k].c - fatte[k - 1].c < 60000) k++;
-  const base = fatte[k - 1].c, ultimo = fatte[fatte.length - 1].c;
-  let n = 0, previsti = 0;
-  for (let i = k; i < fatte.length; i++) { n++; previsti += p0 + fatte[i].m / PASSO; }
-  const passati = (ultimo - base) / 60000;
+  const ultimo = fatte[fatte.length - 1].c;
+  // il tempo tra una sosta e l'altra (scooter, pausa) non conta nel ritmo
+  let n = 0, previsti = 0, passati = 0;
+  for (let i = k; i < fatte.length; i++) {
+    if (fatte[i].z !== fatte[i - 1].z) continue;
+    n++; previsti += p0 + fatte[i].m / PASSO; passati += (fatte[i].c - fatte[i - 1].c) / 60000;
+  }
   // miscela tra il ritmo di oggi e la media dei giorni passati (min_per_palazzo del file del giro):
   // oggi pesa poco all'inizio e cresce con le tappe, ma al massimo 70% (idea di Umberto, 22/11):
   // la media passata conta sempre almeno il 30%. Provato all'indietro sui giorni 17-20/11.
@@ -173,18 +180,32 @@ function stimaFine() {
   }
   // si parte dall'ultima tappa segnata: se cammini senza segnare la stima non cambia;
   // se però passa tanto tempo senza segnare niente, l'orario comincia a spostarsi in avanti
-  const fine = Math.max(ultimo + resto * ritmo * 60000, Date.now() + resto * ritmo * 30000);
-  return {min: (fine - Date.now()) / 60000, iniziato: true, ritmo: ritmo};
+  // appena arrivati a una sosta nuova (niente ancora segnato qui) si parte da adesso
+  const fine = fatte[fatte.length - 1].z !== zq ? Date.now() + resto * ritmo * 60000
+    : Math.max(ultimo + resto * ritmo * 60000, Date.now() + resto * ritmo * 30000);
+  return {min: (fine - Date.now()) / 60000, iniziato: true, ritmo: ritmo, scooter: soloSosta};
 }
 function testoFine() {
   const s = stimaFine();
   if (!s) return '';
   if (!s.iniziato) {
     const m = Math.round(s.min / 5) * 5;
-    return '🕐 giro di circa ' + Math.floor(m / 60) + ' h ' + due(m % 60);
+    return (s.scooter ? '🕐 fino allo scooter circa ' : '🕐 giro di circa ') + Math.floor(m / 60) + ' h ' + due(m % 60);
   }
   const d = new Date(Math.round((Date.now() + s.min * 60000) / 300000) * 300000);
-  return '🕐 fine verso le ' + hhmm(d);
+  return (s.scooter ? '🛵 allo scooter verso le ' : '🕐 fine verso le ') + hhmm(d);
+}
+// Riga della sosta sulla schermata della tappa (solo se il giro ha più soste dello scooter)
+function rigaSosta(t) {
+  const Z = S.giro.zone, nZ = Z.length;
+  if (nZ < 2) return '';
+  const z = Z[t.zi] || {}, dove = esc((z.parcheggio || {}).vicino_a || '');
+  const prima = S.pos > 0 && tappe[S.ordine[S.pos - 1]].zi !== t.zi;
+  const ultimaDiZona = t.zi < nZ - 1 && (S.pos === S.ordine.length - 1 || tappe[S.ordine[S.pos + 1]].zi !== t.zi);
+  if (prima) return '<div class="mazzo-m nuovo">🛵 <b>Sosta ' + (t.zi + 1) + ' di ' + nZ + '</b>: parcheggia vicino a <b>' + dove + '</b></div>';
+  if (ultimaDiZona) return '<div class="mazzo-m nuovo">🛵 Ultima tappa della sosta ' + (t.zi + 1) + ': poi <b>torna allo scooter</b> (' +
+    dove + (z.ritorno_al_parcheggio_m != null ? ', ' + z.ritorno_al_parcheggio_m + ' m' : '') + ')</div>';
+  return '<div class="mazzo-m">🛵 Sosta ' + (t.zi + 1) + ' di ' + nZ + ' · scooter vicino a ' + dove + '</div>';
 }
 function aggiornaFine() {
   const el = document.getElementById('fine');
@@ -322,6 +343,7 @@ function pagTappa(nuova) {
     '<div class="avanz"><i id="barra" style="transform:scaleX(' + (tot ? fatte / tot : 0) + ')"></i></div>' +
     (tr >= 0 && nTr > 1 ? '<div class="mazzo-m' + (nuovoPezzo ? ' nuovo' : '') + '">📦 ' +
       (nuovoPezzo ? (S.pos === 0 ? 'Primo' : 'Nuovo') + ' pezzo di mazzo: ' : 'Pezzo di mazzo ') + '<b>' + esc(testoTratto(tr)) + '</b></div>' : '') +
+    rigaSosta(t) +
     '<div class="icone"><button class="neutro conta cresce' + (k ? ' ha' : '') + '" data-a="dasegnare">⏳ Da segnare <b id="conta">' + k + '</b></button>' +
     '<button class="neutro" data-a="cerca" aria-label="Cerca">🔍</button>' +
     '<button class="neutro" data-a="menu" aria-label="Menu">☰</button></div></section>';
@@ -1014,17 +1036,26 @@ function disegnaGiro() {
     const ti = ritorno ? ord[i - 1] : ord[i], prev = i > 0 ? ord[i - 1] : -1;
     if (!haCoord(ti)) continue;
     const t = tappe[ti], zona = S.giro.zone[t.zi] || {};
-    let linea = null, dritta = false;
+    let linea = null, dritta = false, cambio = false;
     if (ritorno) {
       const pk = puntoPark(t.zi); if (!pk) continue;
       if (ultimaDellaZona(ti) && Array.isArray(zona.percorso_ritorno) && zona.percorso_ritorno.length >= 4) linea = decodPercorso(zona.percorso_ritorno);
       else { linea = [puntoT(ti), pk]; dritta = true; }
     } else {
-      const contigua = (i === 0 && primaDellaZona(ti)) || (prev === ti - 1 && tappe[prev].zi === t.zi);
+      // prima tappa di una sosta nuova: si arriva dallo scooter di questa sosta, e la sosta prima
+      // finisce con il ritorno al suo scooter (tratteggiato)
+      cambio = prev >= 0 && tappe[prev].zi !== t.zi && primaDellaZona(ti);
+      if (cambio && ultimaDellaZona(prev)) {
+        const zp = S.giro.zone[tappe[prev].zi] || {}, pkp = puntoPark(tappe[prev].zi);
+        const lr = Array.isArray(zp.percorso_ritorno) && zp.percorso_ritorno.length >= 4 ? decodPercorso(zp.percorso_ritorno) : (pkp ? [puntoT(prev), pkp] : null);
+        if (lr) L.polyline(lr, {renderer: R, interactive: false, color: COL_TRATTI[Math.max(0, trattoDi(prev)) % COL_TRATTI.length],
+          lineCap: 'round', lineJoin: 'round', weight: 4, opacity: i <= att ? 0.3 : 0.75, dashArray: '8 9'}).addTo(g);
+      }
+      const contigua = (i === 0 && primaDellaZona(ti)) || cambio || (prev === ti - 1 && tappe[prev].zi === t.zi);
       if (prev >= 0 && inC.has(ti) && inC.has(prev)) linea = [puntoT(prev), puntoT(ti)];   // dentro il cortile: dritto
       else if (contigua && Array.isArray(t.percorso) && t.percorso.length >= 4) linea = decodPercorso(t.percorso);
       else {
-        const da = i === 0 ? puntoPark(t.zi) : (haCoord(prev) ? puntoT(prev) : null);
+        const da = (i === 0 || cambio) ? puntoPark(t.zi) : (haCoord(prev) ? puntoT(prev) : null);
         if (!da) continue;
         linea = [da, puntoT(ti)]; dritta = true;
       }
@@ -1035,7 +1066,7 @@ function disegnaGiro() {
     // (se la tappa di adesso è già tutta segnata, la strada da fare è quella verso la tappa dopo)
     const fatto = !ritorno && i < att, ora = !ritorno && i === att;
     const nelC = !ritorno && prev >= 0 && inC.has(ti) && inC.has(prev);
-    if (ora) { daFare = {linea: linea, dritta: dritta, nelC: nelC, prev: prev}; continue; }
+    if (ora) { daFare = {linea: linea, dritta: dritta, nelC: nelC, prev: cambio ? -1 : prev}; continue; }
     L.polyline(linea, {renderer: R, interactive: false, color: col, lineCap: 'round', lineJoin: 'round',
       weight: nelC ? 3 : (fatto ? 4 : 5), opacity: fatto ? 0.3 : 0.75,
       dashArray: ritorno ? '8 9' : (dritta ? '2 9' : null)}).addTo(g);
