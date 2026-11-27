@@ -8,3 +8,6 @@ lista_*
 *.md
 # eccezione: la mappa della zona viene da OpenStreetMap, è pubblica e non contiene dati del giro
 !mappa_zona.json
+
+# eccezione: il giro di prova ha solo nomi e codici inventati (strumenti/prova.py)
+!prova.json

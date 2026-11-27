@@ -338,7 +338,7 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .t-mappa { isolation: isolate; position: relative; flex: 1 1 auto; min-height: 200px; border-radius: 18px; overflow: hidden; background: #E6ECF2; border: 1px solid var(--bordo); }
 .t-mappa #m-carta { position: absolute; inset: 0; }
 .t-tocca { position: absolute; inset: 0; z-index: 900; width: 100%; height: 100%; }
-.t-mappa .ingrandisci { position: absolute; left: 10px; bottom: 10px; z-index: 901; padding: 5px 10px; border-radius: 99px; pointer-events: none;
+.t-mappa .ingrandisci { position: absolute; left: 10px; top: 10px; z-index: 901; padding: 5px 10px; border-radius: 99px; pointer-events: none;
   background: rgba(255,255,255,.92); border: 1px solid var(--bordo); font-size: 13px; font-weight: 700; color: var(--accento); }
 .t-mappa.senza::after { content: 'Mappa non disponibile: apri l\'app una volta con internet'; position: absolute; inset: 0; display: flex;
   align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--testo2); }
@@ -498,12 +498,6 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .t-attr { display: none; position: absolute; right: 6px; bottom: 4px; z-index: 901; font-size: 10px; color: var(--testo2);
   background: rgba(255,255,255,.75); padding: 0 4px; border-radius: 4px; pointer-events: none; }
 .t-mappa.ruota .t-attr { display: block; }
-.t-dir { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 70px); z-index: 901; pointer-events: none;
-  display: flex; align-items: center; gap: 8px; padding: 5px 12px 6px 10px; border-radius: 14px; background: var(--tono); color: #fff;
-  font-size: 15px; font-weight: 600; line-height: 1.2; box-shadow: 0 2px 6px rgba(30,37,48,.3); }
-.t-dir .fr { font-size: 30px; font-weight: 900; line-height: 1; flex: 0 0 auto; }
-.t-dir b { font-weight: 900; font-size: 18px; white-space: nowrap; }
-.t-dir.bus { background: rgba(255,255,255,.95); color: var(--tono); border: 1.5px solid var(--tono); font-weight: 800; }
 .t-bussola { position: absolute; right: 8px; top: 8px; z-index: 902; width: 48px; height: 48px; border-radius: 50%;
   background: rgba(255,255,255,.92); border: 1.5px solid var(--bordo); display: flex; align-items: center; justify-content: center;
   box-shadow: 0 1px 4px rgba(30,37,48,.25); }
@@ -572,3 +566,67 @@ h3 { margin: 6px 2px 0; font-size: 18px; color: var(--tono); }
 .a-es { font-size: 15px; color: var(--testo); }
 .a-cod { font-size: 13px; color: var(--testo2); overflow-wrap: anywhere; }
 #a-carta:focus, #a-carta:focus-visible { outline: none; }
+
+/* ===== 1.10: più facile per chi inizia ===== */
+/* striscia grande con la direzione */
+.dir-grande { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 16px; background: var(--tono); color: #fff; flex: 0 0 auto; }
+.dir-grande .fr { flex: 0 0 46px; height: 46px; border-radius: 50%; background: #fff; color: var(--tono); font-size: 30px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center; line-height: 1; }
+.dir-grande .tx { font-size: 18px; line-height: 1.15; font-weight: 600; }
+.dir-grande .tx b { font-size: 22px; font-weight: 900; letter-spacing: .02em; }
+.dir-grande small { display: block; font-size: 14px; font-weight: 600; opacity: .85; margin-top: 2px; }
+/* legenda sempre visibile in fondo alla mappa */
+.leg-fissa { position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 901; pointer-events: none; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: center; gap: 2px 10px; padding: 4px 8px; border-radius: 12px; background: rgba(255,255,255,.92);
+  font-size: 12px; font-weight: 700; color: var(--tono); box-shadow: 0 1px 3px rgba(30,37,48,.15); }
+.leg-fissa span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.leg-fissa .m-linea { flex: 0 0 18px; width: 18px; height: 5px; }
+.leg-fissa em { font-style: normal; font-weight: 500; font-size: 9px; color: var(--testo2); }
+.t-mappa .leaflet-control-attribution, #mappa .leaflet-control-attribution { display: none; }
+#mappa .leg-fissa { bottom: 10px; }
+.m-linea.ora { background: #23344D; height: 7px; box-shadow: 0 0 0 1.5px #fff; }
+.m-linea.dopo { background: #5B8FD0; opacity: .75; }
+.m-linea.fatta { background: #8A94A2; opacity: .7; }
+.m-linea.tratt { background: repeating-linear-gradient(90deg, #5B8FD0 0 6px, transparent 6px 10px); }
+.prova-m { text-align: center; font-size: 13px; font-weight: 800; color: var(--ambra-s); background: var(--ambra-v); border-radius: 8px; padding: 2px 6px; }
+.neutro.aiuto { min-width: 46px; padding: 4px 12px; font-size: 20px; font-weight: 900; }
+.barra .neutro.aiuto { flex: 0 0 auto; }
+.t-verde { color: var(--verde); } .t-blu { color: var(--blu); } .t-ambra { color: var(--ambra-s); } .t-rosso { color: var(--rosso); }
+.inizio-riga { width: 100%; max-width: 420px; }
+.inizio-riga .neutro { font-size: 16px; }
+.inizio .neutro { width: 100%; max-width: 420px; }
+/* guida */
+.guida { position: fixed; inset: 0; z-index: 30; background: var(--sfondo); display: flex; flex-direction: column; gap: 10px;
+  max-width: 560px; margin: 0 auto; padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); }
+.anim .guida.g-nuova .g-pag { animation: sale .25s ease-out both; }
+.g-su { display: flex; align-items: center; justify-content: space-between; }
+.g-num { font-size: 15px; font-weight: 700; color: var(--testo2); }
+.g-salta { min-height: 44px; padding: 4px 12px; border-radius: 12px; border: 1px solid var(--bordo); background: var(--scheda); font: inherit; font-size: 15px; font-weight: 700; color: var(--tono); }
+.g-pag { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; font-size: 17px; line-height: 1.35; }
+.g-pag h2 { margin: 0; font-size: 26px; color: var(--tono); }
+.g-pag p { margin: 0; }
+.g-pallini { display: flex; justify-content: center; gap: 8px; }
+.g-pallini i { width: 9px; height: 9px; border-radius: 50%; background: rgba(35,52,77,.2); }
+.g-pallini i.on { background: var(--tono); width: 24px; border-radius: 99px; }
+.g-flusso { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 10px 0; }
+.g-file { padding: 10px 14px; border-radius: 12px; background: #fff; border: 1.5px solid var(--bordo); font-weight: 700; color: var(--tono); }
+.g-fr { font-size: 30px; font-weight: 900; color: var(--accento); }
+.g-app img { width: 64px; height: 64px; border-radius: 16px; display: block; }
+.g-tappa { display: flex; flex-direction: column; padding: 10px 14px; border-radius: 18px; background: var(--velo); color: var(--tono); }
+.g-tappa .v { font-size: 20px; font-weight: 800; }
+.g-tappa .c { font-size: 56px; font-weight: 900; line-height: .95; }
+.g-tappa .l { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--accento); font-size: 18px; }
+.g-tappa .l i { font-style: normal; min-width: 40px; padding: 2px 8px; border-radius: 10px; background: #fff; border: 1.5px solid var(--bordo); color: var(--tono); font-weight: 900; text-align: center; }
+.g-leg { display: flex; align-items: center; gap: 12px; font-size: 17px; }
+.g-leg .m-linea { flex: 0 0 40px; width: 40px; }
+.g-leg .m-t { flex: 0 0 32px; width: 32px; height: 32px; font-size: 14px; }
+.g-park, .m-leg .g-park { flex: 0 0 32px; width: 32px; height: 32px; font-size: 17px; display: inline-flex; align-items: center; justify-content: center; }
+.g-esito { padding: 10px 14px; border-radius: 14px; color: #fff; font-weight: 800; font-size: 17px; }
+.g-esito small { display: block; font-weight: 500; font-size: 14px; opacity: .95; }
+.g-esito.consegnata { background: var(--verde); } .g-esito.terzi { background: var(--blu); }
+.g-esito.avviso { background: var(--ambra); color: var(--ambra-t); } .g-esito.sconosciuto { background: var(--rosso); }
+.g-punto { padding: 10px 12px; border-radius: 14px; background: var(--scheda); border: 1px solid var(--bordo); font-size: 16px; }
+.g-punto b { display: block; font-size: 18px; color: var(--tono); }
+.guida .riga .neutro, .guida .riga .pieno { min-height: 56px; }
+.pann .icone .neutro.conta { white-space: nowrap; font-size: 16px; padding: 4px 10px; }
+.pann .icone .neutro.aiuto { min-width: 44px; padding: 4px 10px; }

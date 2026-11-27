@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.9';
+const VERSIONE_APP = '1.10';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -46,6 +46,10 @@ function nomeHtml(dest) {
 function animOn() {
   return S.anim !== false && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
+// preferenze che restano anche cambiando giro (1.10): animazioni, modalità semplice (di base sì), mappa che gira (di base no)
+const preferenze = () => ({anim: S.anim !== false, semplice: S.semplice !== false, ruota: S.ruota === true});
+const semplice = () => S.semplice !== false;
+const ruotaOn = () => S.ruota === true && !semplice();
 function vibra() { try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) {} }
 function salva() { try { localStorage.setItem(CHIAVE, JSON.stringify(S)); } catch (e) { toast('⚠ Non riesco a salvare sul telefono'); } }
 
@@ -89,7 +93,7 @@ function caricaTesto(testo) {
   }
   const err = controlla(g);
   if (err) return rifiuta(err);
-  const inCorso = S.giro && !S.esportato && Object.keys(S.esiti || {}).length > 0;
+  const inCorso = S.giro && !S.giro.prova && !S.esportato && Object.keys(S.esiti || {}).length > 0;
   if (inCorso) {
     apriFoglio({tipo: 'chiedi', titolo: 'Sostituire il giro in corso?',
       testo: 'C\'è già il giro del ' + ggmmaaaa(S.giro.data) + ' con esiti segnati e non ancora esportato. Se carichi il nuovo, quegli esiti si perdono.',
@@ -101,7 +105,7 @@ function rifiuta(msg) {
   else { erroreInizio = msg; disegna(); }
 }
 function inizia(g) {
-  S = {giro: g, ordine: [], pos: 0, esiti: {}, rimandate: [], esportato: false, pila: [], anim: S.anim !== false};
+  S = Object.assign(preferenze(), {giro: g, ordine: [], pos: 0, esiti: {}, rimandate: [], esportato: false, pila: []});
   indicizza();
   S.ordine = tappe.map(t => t.ti);
   erroreInizio = ''; foglio = null; gigante = null;
@@ -228,6 +232,11 @@ function testoTratto(i) {
   const t = S.giro.tratti[i];
   return t.verso === 'indietro' ? 'N ' + t.a + '–' + t.da + ' all\'indietro' : 'N ' + t.da + '–' + t.a;
 }
+// a parole (1.10): "le buste da N 107 a N 127" invece di "pezzo di mazzo"
+function bustePezzo(i) {
+  const t = S.giro.tratti[i];
+  return t.verso === 'indietro' ? 'le buste dalla <b>N ' + t.a + '</b> alla <b>N ' + t.da + '</b> (all\'indietro)' : 'le buste dalla <b>N ' + t.da + '</b> alla <b>N ' + t.a + '</b>';
+}
 function indirizzoBusta(n) {
   const t = tappe[perN[n].ti], b = perN[n].b;
   return (t.via && b.civico) ? t.via + ', ' + b.civico : t.indirizzo;
@@ -242,6 +251,7 @@ function indietro() {
   if (occupato) return true;
   if (gigante != null) { gigante = null; disegnaSopra(); return true; }
   if (foglio) { chiudiFoglio(); return true; }
+  if (guida != null) { if (guida > 0) { guida--; disegnaSopra(true); } else chiudiGuida(); return true; }
   if (AV.aperto && A) { indietroArchivio(); return true; }
   if (S.giro && S.pila.length) { S.pila.pop(); salva(); disegna(); return true; }
   return false;
@@ -293,8 +303,9 @@ function disegna() {
   if (dopo) { const f = dopo; dopo = null; f(); }
 }
 
-function barraIndietro(titolo) {
-  return '<div class="barra"><button class="neutro" data-a="indietro">‹ Indietro</button><div class="titolo-pag">' + esc(titolo) + '</div></div>';
+function barraIndietro(titolo, aiuto) {
+  return '<div class="barra"><button class="neutro" data-a="indietro">‹ Indietro</button><div class="titolo-pag">' + esc(titolo) + '</div>' +
+    (aiuto ? '<button class="neutro aiuto" data-a="aiuto" data-k="' + aiuto + '" aria-label="Aiuto">?</button>' : '') + '</div>';
 }
 function rigaBusta(n, conIndirizzo) {
   const b = perN[n].b, e = esitoDi(n), r = rec(n);
@@ -306,7 +317,7 @@ function rigaBusta(n, conIndirizzo) {
     '<span class="chi"><span class="nome">' + nomeHtml(b.destinatario) + '</span>' +
     (conIndirizzo ? '<div class="dove">' + esc(indirizzoBusta(n)) + '</div>' : '') +
     '<div class="sotto">' + sotto + '</div></span>' +
-    (e ? '<span class="timbro">' + (e === 'da_segnare' ? '⏳ da segnare' : NOMI[e]) + '</span>' : '') +
+    (e ? '<span class="timbro">' + (e === 'da_segnare' ? '⏳ segno dopo' : NOMI[e]) + '</span>' : '') +
     '</button>';
 }
 
@@ -314,6 +325,7 @@ function pagInizio() {
   return '<div class="inizio"><img src="icon-192.png" alt=""><h1>Giro Postino</h1>' +
     (erroreInizio ? '<p class="errore">' + esc(erroreInizio) + '</p>' : '') +
     '<button class="pieno" data-a="carica">Carica giro</button>' +
+    '<div class="riga inizio-riga"><button class="neutro" data-a="guida">📖 Come funziona</button><button class="neutro" data-a="prova">🧪 Giro di prova</button></div>' +
     (A ? '<button class="neutro" data-a="archivio">🗂 Archivio di tutti i giri</button>' : '') +
     '<p>Apri il file del giro da WhatsApp e tocca<br><b>Condividi → Giro Postino</b>.</p>' +
     '<p>Oppure tocca “Carica giro” e scegli il file <b>giro_….json</b>.</p></div>';
@@ -339,15 +351,15 @@ function pagTappa(nuova) {
     (cq.length > 1 ? '<span class="cort">🏘 portone ' + (cq.indexOf(t.ti) + 1) + ' di ' + cq.length + ' del cortile</span>' : '') +
     '<span class="lett"><span class="q">' + (q === 1 ? '1 lettera' : q + ' lettere') + '</span>' +
     t.buste.map(b => { const e = esitoDi(b.n); return '<span class="nchip' + (e ? ' e-' + e : '') + '">' + b.n + '</span>'; }).join('') +
-    (tappaFinita(t.ti) ? '<span class="ok-chip">✓ fatta</span>' : (rim ? '<span class="etichetta">↪ rimandata</span>' : '')) + '</span>' +
+    (tappaFinita(t.ti) ? '<span class="ok-chip">✓ fatta</span>' : (rim ? '<span class="etichetta">↪ ci ripasso</span>' : '')) + '</span>' +
     '<span class="vai" aria-hidden="true">›</span></button>';
+  // striscia grande con la direzione (1.10): "Esci e vai a DESTRA · 30 m"; la riempie orientaMini()
+  h += '<div class="dir-grande" id="t-dir" hidden></div>';
   h += '<div class="t-mappa" id="posto-mappa"><button class="t-tocca" data-a="mappa" aria-label="Apri la mappa a tutto schermo"></button>' +
-    '<div class="t-dir" id="t-dir" hidden></div>' +
-    '<button class="t-bussola' + (bussola ? ' on' : '') + '" data-a="bussola" aria-label="Bussola: la mappa gira con il telefono">' +
-      '<svg id="t-ago" viewBox="0 0 24 24"><path d="M12 2 L16 12 L8 12 Z" fill="#DC2F3C"/><path d="M12 22 L8 12 L16 12 Z" fill="#9AA6B5"/><text x="12" y="10.2" text-anchor="middle" font-size="5.5" font-weight="900" fill="#fff">N</text></svg></button>' +
-    '<span class="t-attr">© OpenStreetMap</span>' +
-    '<span class="ingrandisci">⤢ tocca per ingrandire</span></div>';
-  h += '<section class="pann"><div class="nav">' +
+    (semplice() ? '' : '<button class="t-bussola' + (bussola ? ' on' : '') + '" data-a="bussola" aria-label="Bussola: la mappa gira con il telefono">' +
+      '<svg id="t-ago" viewBox="0 0 24 24"><path d="M12 2 L16 12 L8 12 Z" fill="#DC2F3C"/><path d="M12 22 L8 12 L16 12 Z" fill="#9AA6B5"/><text x="12" y="10.2" text-anchor="middle" font-size="5.5" font-weight="900" fill="#fff">N</text></svg></button>') +
+    '<span class="ingrandisci">⤢ ingrandisci</span>' + legendaFissa() + '</div>';
+  h += '<section class="pann">' + (S.giro.prova ? '<div class="prova-m">🧪 GIRO DI PROVA · nomi inventati</div>' : '') + '<div class="nav">' +
     '<button class="freccia" data-a="prec" aria-label="Tappa precedente"' + (S.pos === 0 ? ' disabled' : '') + '>‹</button>' +
     '<button class="quale" data-a="tappe">Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length +
       '<small>' + fatte + ' di ' + tot + ' buste fatte' + (vicina ? ' · a ' + Math.round(t.metri_dalla_precedente / 10) * 10 + ' m' : '') + '</small>' +
@@ -355,10 +367,11 @@ function pagTappa(nuova) {
     '<button class="freccia" data-a="succ" aria-label="Tappa successiva">›</button></div>' +
     '<div class="avanz"><i id="barra" style="transform:scaleX(' + (tot ? fatte / tot : 0) + ')"></i></div>' +
     (tr >= 0 && nTr > 1 ? '<div class="mazzo-m' + (nuovoPezzo ? ' nuovo' : '') + '">📦 ' +
-      (nuovoPezzo ? (S.pos === 0 ? 'Primo' : 'Nuovo') + ' pezzo di mazzo: ' : 'Pezzo di mazzo ') + '<b>' + esc(testoTratto(tr)) + '</b></div>' : '') +
+      (nuovoPezzo ? (S.pos === 0 ? 'Parti con ' : 'Ora prendi ') : 'Stai facendo ') + bustePezzo(tr) + '</div>' : '') +
     rigaSosta(t) +
-    '<div class="icone"><button class="neutro conta cresce' + (k ? ' ha' : '') + '" data-a="dasegnare">⏳ Da segnare <b id="conta">' + k + '</b></button>' +
+    '<div class="icone"><button class="neutro conta cresce' + (k ? ' ha' : '') + '" data-a="dasegnare">⏳ Segno dopo <b id="conta">' + k + '</b></button>' +
     '<button class="neutro" data-a="cerca" aria-label="Cerca">🔍</button>' +
+    '<button class="neutro aiuto" data-a="aiuto" data-k="tappa" aria-label="Aiuto">?</button>' +
     '<button class="neutro" data-a="menu" aria-label="Menu">☰</button></div></section>';
   return h;
 }
@@ -367,8 +380,8 @@ function pagTappa(nuova) {
 function pagPalazzo() {
   const t = tappaQui(), q = t.buste.length;
   const ultima = S.pos === S.ordine.length - 1;
-  let h = barraIndietro('Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length);
-  if (S.rimandate.indexOf(t.ti) >= 0 && !tappaFinita(t.ti)) h += '<div><span class="etichetta">↪ rimandata</span></div>';
+  let h = barraIndietro('Tappa ' + (S.pos + 1) + ' di ' + S.ordine.length, 'palazzo');
+  if (S.rimandate.indexOf(t.ti) >= 0 && !tappaFinita(t.ti)) h += '<div><span class="etichetta">↪ ci ripasso</span></div>';
   const cq = cortileDi(t.ti);
   h += '<h1 class="indirizzo">' + esc(t.indirizzo) + '</h1>' +
     '<div class="quante">' + (q === 1 ? '1 lettera qui' : q + ' lettere qui') + '</div>';
@@ -392,7 +405,7 @@ function pagPalazzo() {
   }
   if (!tappaFinita(t.ti)) {
     h += '<div class="riga"><button class="neutro" data-a="salta">⏳ Salta palazzo,<br>segno dopo</button>' +
-      '<button class="neutro" data-a="posticipa"' + (ultima ? ' disabled' : '') + '>↪ Posticipa</button></div>';
+      '<button class="neutro" data-a="posticipa"' + (ultima ? ' disabled' : '') + '>↪ Ci ripasso<br>dopo</button></div>';
   }
   return h + '</div>';
 }
@@ -418,13 +431,13 @@ function riquadroAvviso(n, ora, dataIso, modificabile, tardi) {
 
 function pagBusta(n) {
   const b = perN[n].b, t = tappe[perN[n].ti], e = esitoDi(n), r = rec(n);
-  let h = barraIndietro('Tappa ' + (S.ordine.indexOf(t.ti) + 1) + ' · ' + (t.buste.length === 1 ? '1 lettera' : t.buste.length + ' lettere'));
+  let h = barraIndietro('Tappa ' + (S.ordine.indexOf(t.ti) + 1) + ' · ' + (t.buste.length === 1 ? '1 lettera' : t.buste.length + ' lettere'), 'busta');
   h += '<div class="scheda-busta entra' + (e ? ' e-' + e : '') + '" id="scheda">' +
     '<div class="n-enorme"><small>RIGA DEL BLOCCO</small>' + n + '</div>' +
     '<button class="nome-grande" data-a="gigante" data-n="' + n + '">' + nomeHtml(b.destinatario) + '<span class="lente">⤢ tocca per vederlo gigante</span></button>' +
     '<div class="ind">' + esc(indirizzoBusta(n)) + '</div>' +
     '<div class="cod">codice …' + esc(String(b.codice || '').slice(-5)) + '</div>' +
-    (e ? '<div><span class="timbro">' + (e === 'da_segnare' ? '⏳ da segnare' : NOMI[e]) + '</span></div>' : '');
+    (e ? '<div><span class="timbro">' + (e === 'da_segnare' ? '⏳ segno dopo' : NOMI[e]) + '</span></div>' : '');
   if (e === 'terzi') h += '<div class="dett">Ha ritirato: <b>' + esc(r.ritirato_da) + '</b> · ore ' + esc(r.ora || '') + '</div>';
   if (e === 'consegnata' || e === 'sconosciuto') h += '<div class="dett">Segnata alle ' + esc(r.ora || '') + '</div>';
   if (e === 'avviso') h += '<div class="dett">' + riquadroAvviso(n, r.ora_avviso || r.ora || '', r.data_avviso || iso(new Date()), false) + '</div>';
@@ -445,7 +458,7 @@ function pagBusta(n) {
 
 function pagDaSegnare() {
   const l = daSegnare();
-  return barraIndietro('Da segnare (' + l.length + ')') +
+  return barraIndietro('Segno dopo (' + l.length + ')') +
     (l.length ? '<div class="lista">' + l.map(n => rigaBusta(n, true)).join('') + '</div>'
       : '<p class="ok">✅ Nessuna busta in sospeso.</p>');
 }
@@ -479,7 +492,7 @@ function pagTappe() {
     return '<button class="tappa-r' + (i === S.pos ? ' qui' : '') + (f === t.buste.length ? ' fatta' : '') + '" data-a="vaitappa" data-i="' + i + '">' +
       '<span class="p">' + (i + 1) + '</span><span class="a">' + esc(t.indirizzo) +
       '<small>N ' + ns.join(', ') + '</small></span>' +
-      (S.rimandate.indexOf(ti) >= 0 && f < t.buste.length ? '<span class="etichetta">rimandata</span>' : '') +
+      (S.rimandate.indexOf(ti) >= 0 && f < t.buste.length ? '<span class="etichetta">ci ripasso</span>' : '') +
       '<span class="q">' + f + '/' + t.buste.length + '</span></button>';
   }).join('') + '</div>';
   return h;
@@ -507,9 +520,9 @@ function pagRiepilogo() {
     ? '<div class="attento">⚠ ' + (mancano.length === 1 ? 'Manca l\'esito di 1 busta' : 'Manca l\'esito di ' + mancano.length + ' buste') + ' su ' + tot + '.</div>'
     : '<p class="ok">✅ Tutte le ' + tot + ' buste hanno un esito.</p>';
   if (rim.length) {
-    h += '<h3>Tappe rimandate non finite</h3><div class="lista">' + rim.map(ti =>
+    h += '<h3>Palazzi dove dovevi ripassare</h3><div class="lista">' + rim.map(ti =>
       '<button class="tappa-r" data-a="vaitappa" data-i="' + S.ordine.indexOf(ti) + '"><span class="p">' + (S.ordine.indexOf(ti) + 1) +
-      '</span><span class="a">' + esc(tappe[ti].indirizzo) + '</span><span class="etichetta">rimandata</span></button>').join('') + '</div>';
+      '</span><span class="a">' + esc(tappe[ti].indirizzo) + '</span><span class="etichetta">ci ripasso</span></button>').join('') + '</div>';
   }
   if (mancano.length) h += '<h3>Buste senza esito</h3><div class="lista">' + mancano.map(n => rigaBusta(n, true)).join('') + '</div>';
   h += '<div class="fondo"><button class="pieno" data-a="esporta">📤 Esporta riepilogo</button>' +
@@ -598,7 +611,7 @@ function pagMazzo() {
   const ultimo = tuttiN()[tot - 1];
   let h = barraIndietro('Ordine del mazzo');
   h += '<p class="mz-intro">Il mazzo arriva come il blocco: <b>N 1 in cima</b>, <b>N ' + ultimo + ' in fondo</b>. Ecco cosa cambiare per averlo nell\'ordine del giro' +
-    (S.rimandate.length ? ' <b>di adesso</b> (con le tappe rimandate)' : '') + '.</p>';
+    (S.rimandate.length ? ' <b>di adesso</b> (con i palazzi dove ripassi dopo)' : '') + '.</p>';
   const mosse = P.reduce((s, p) => s + p.mosse.length, 0), rovesci = P.filter(p => p.d < 0);
   if (P.length === 1 && !mosse && P[0].d > 0) return h + '<p class="ok">✅ Il mazzo è già nell\'ordine del giro: non serve cambiare niente.</p>';
   let passo = 0;
@@ -650,6 +663,7 @@ function disegnaSopra(nuovo) {
       (resto ? '<span class="resto">' + esc(resto) + '</span>' : '') +
       '<span class="rigaN">riga del blocco<b>' + gigante + '</b></span><span class="chiudi">tocca per chiudere</span></button>';
   }
+  if (guida != null) h += htmlGuida(nuovo);
   $sopra.innerHTML = h;
   if (foglio && nuovo) {
     const c = $sopra.querySelector('[data-fuoco]');
@@ -667,23 +681,29 @@ function corpoFoglio(f) {
     const i = S.pos, tr = trattoDi(S.ordine[i]);
     let altreTratto = false;
     for (let k = i + 1; k < S.ordine.length; k++) if (trattoDi(S.ordine[k]) === tr) altreTratto = true;
-    return '<h2>Posticipa questo palazzo</h2><p>' + esc(tappaQui().indirizzo) + '</p>' +
+    return '<h2>Ci ripasso dopo</h2><p>' + esc(tappaQui().indirizzo) + '</p><p>Il palazzo si sposta più avanti nel giro. Quando vuoi ripassare?</p>' +
       '<button class="neutro" data-a="post" data-m="prossima">Dopo la prossima tappa</button>' +
-      '<button class="neutro" data-a="post" data-m="tratto"' + (altreTratto && tr >= 0 ? '' : ' disabled') + '>In fondo al tratto' +
-        (tr >= 0 ? ' (' + esc(testoTratto(tr)) + ')' : '') + '</button>' +
-      '<button class="neutro" data-a="post" data-m="giro">In fondo al giro</button>' +
+      (semplice() ? '' : '<button class="neutro" data-a="post" data-m="tratto"' + (altreTratto && tr >= 0 ? '' : ' disabled') + '>Alla fine di queste buste' +
+        (tr >= 0 ? ' (' + esc(testoTratto(tr)) + ')' : '') + '</button>') +
+      '<button class="neutro" data-a="post" data-m="giro">Alla fine del giro</button>' +
       '<button class="neutro" data-a="chiudifoglio">Annulla</button>';
   }
+  if (f.tipo === 'aiuto') { const a = AIUTI[f.k] || AIUTI.tappa; return '<h2>' + a[0] + '</h2>' + a[1] +
+    '<button class="pieno" data-a="chiudifoglio">Ho capito</button><button class="neutro" data-a="guida">📖 Rivedi la guida</button>'; }
   if (f.tipo === 'menu') return '<h2>Menu</h2>' +
     '<button class="neutro" data-a="mappa">🗺 Mappa del giro</button>' +
     (A ? '<button class="neutro" data-a="archivio">🗂 Archivio di tutti i giri</button>' : '') +
     '<button class="neutro" data-a="tappe">Tutte le tappe</button>' +
-    '<button class="neutro" data-a="mazzo">📦 Ordine del mazzo</button>' +
-    '<button class="neutro" data-a="riepilogo">Riepilogo ed esporta</button>' +
+    (semplice() ? '' : '<button class="neutro" data-a="mazzo">📦 Ordine del mazzo</button>') +
+    '<button class="neutro" data-a="riepilogo">🏁 Riepilogo ed esporta</button>' +
     '<button class="neutro" data-a="carica">Carica un altro giro</button>' +
+    '<button class="neutro" data-a="guida">📖 Guida</button>' +
+    '<button class="neutro" data-a="prova">🧪 Prova con un giro finto</button>' +
+    '<button class="neutro" data-a="semplice">' + (semplice() ? 'Modalità semplice: sì' : 'Modalità semplice: no (tutto)') + '</button>' +
+    (semplice() ? '' : '<button class="neutro" data-a="ruota">Mappa che gira: ' + (ruotaOn() ? 'sì' : 'no') + '</button>') +
     '<button class="neutro" data-a="anim">Animazioni: ' + (S.anim !== false ? 'sì' : 'no') + '</button>' +
     '<button class="neutro" data-a="chiudifoglio">Chiudi</button>' +
-    '<p style="text-align:center;color:var(--testo2);font-size:15px">Giro del ' + ggmmaaaa(S.giro.data) + ' · affido ' + esc(S.giro.affido || '') + ' · versione ' + VERSIONE_APP + '</p>';
+    '<p style="text-align:center;color:var(--testo2);font-size:15px">' + (S.giro.prova ? 'Giro di prova' : 'Giro del ' + ggmmaaaa(S.giro.data) + ' · affido ' + esc(S.giro.affido || '')) + ' · versione ' + VERSIONE_APP + '</p>';
   // domanda generica
   return '<h2>' + esc(f.titolo) + '</h2><p>' + esc(f.testo) + '</p>' +
     (f.si ? '<button class="pieno" data-a="ok-chiedi">' + esc(f.si) + '</button>' : '') +
@@ -842,7 +862,72 @@ function posticipa(modo) {
   if (S.rimandate.indexOf(id) < 0) S.rimandate.push(id);
   lasciaPalazzo();
   salva(); disegna();
-  toast('Palazzo rimandato: ora è la tappa ' + (j + 1));
+  toast('Ci ripassi dopo: ora è la tappa ' + (j + 1));
+}
+
+/* ================= aiuti e guida (1.10) =================
+   "?" su ogni schermata: due righe su cosa si vede. La guida (5 pagine con disegni) si apre da sola
+   la prima volta che si apre l'app, e poi dal menu. */
+const AIUTI = {
+  tappa: ['Dove andare adesso', '<p>In alto ci sono la <b>via</b> e il <b>numero civico</b> (grande). I riquadri con i numeri sono le <b>buste da consegnare qui</b>: il numero N è la riga del blocco dove far firmare.</p>' +
+    '<p><b>Tocca il riquadro</b> per aprire le lettere del palazzo.</p><p>La <b>striscia blu</b> ti dice da che parte andare quando esci dal palazzo di prima. Sulla mappa la <b>linea blu scura</b> è la strada da fare adesso.</p>' +
+    '<p>In basso: ‹ › per cambiare tappa, ⏳ le buste da segnare dopo, 🔍 cerca, ☰ menu.</p>'],
+  palazzo: ['Le lettere del palazzo', '<p>Tocca una busta per dire <b>com\'è andata</b>.</p><p>Di fretta? <b>⏳ Salta palazzo, segno dopo</b>: vai avanti e metti gli esiti quando hai tempo.</p>' +
+    '<p>Portone chiuso o nessuno? <b>↪ Ci ripasso dopo</b>: il palazzo si sposta più avanti nel giro.</p><p>Quando tutte le buste hanno un esito compare <b>Vai alla tappa successiva</b>.</p>'],
+  busta: ['Com\'è andata?', '<p><b class="t-verde">Verde</b>: l\'ha presa il destinatario. Fa la firma sul blocco.</p>' +
+    '<p><b class="t-blu">Blu</b>: l\'ha presa un\'altra persona (portinaio, familiare). Firma e scrive il suo cognome accanto.</p>' +
+    '<p><b class="t-ambra">Giallo</b>: non c\'è nessuno. Lasci l\'avviso compilato, scrivi AVVISO e la busta torna in borsa.</p>' +
+    '<p><b class="t-rosso">Rosso</b>: il cognome non c\'è da nessuna parte (citofono, cassette). La busta torna indietro.</p>' +
+    '<p>L\'app ti fa vedere disegnato cosa scrivere. Di fretta? <b>⏳ Segno dopo</b>.</p>']
+};
+const CHIAVE_GUIDA = 'giro_postino_guida';
+let guida = null;   // pagina della guida aperta, oppure null
+const LINEA = (cl, t) => '<div class="g-leg"><i class="m-linea ' + cl + '"></i><span>' + t + '</span></div>';
+const PALLINO = (cl, n, t) => '<div class="g-leg"><span class="m-t ' + cl + '">' + n + '</span><span>' + t + '</span></div>';
+const GUIDA = [
+  ['👋 Benvenuto', '<p>Giro Postino ti guida nel giro delle raccomandate, <b>una tappa alla volta</b>. Funziona anche <b>senza internet</b>.</p>' +
+    '<div class="g-flusso"><span class="g-file">📄 giro_….json</span><span class="g-fr">→</span><span class="g-app"><img src="icon-192.png" alt=""></span></div>' +
+    '<p>La sera ricevi su WhatsApp il <b>file del giro</b>. Toccalo, poi <b>Condividi → Giro Postino</b>.</p><p>Oppure, nell\'app: <b>Carica giro</b> e scegli il file.</p>'],
+  ['📍 La tappa', '<div class="g-tappa"><span class="v">VIA BERTOLA</span><span class="c">49</span><span class="l"><b>2 lettere</b><i>12</i><i>13</i></span></div>' +
+    '<div class="dir-grande g-dir"><span class="fr">→</span><span class="tx">Esci e vai a <b>DESTRA</b><small>fino alla prossima: 40 m</small></span></div>' +
+    '<p>Il numero grande è il <b>civico</b>. I riquadri (12, 13) sono le <b>buste</b>: è il numero N del blocco, cioè la riga dove far firmare. Le buste nel mazzo sono nello stesso ordine.</p>' +
+    '<p><b>Tocca il riquadro</b> per aprire le lettere. La striscia blu ti dice da che parte andare uscendo dal palazzo.</p>'],
+  ['🗺 La mappa', LINEA('ora', 'la strada da fare <b>adesso</b>') + LINEA('dopo', 'la strada delle tappe dopo') + LINEA('fatta', 'strada già fatta') +
+    LINEA('tratt', 'ritorno allo scooter') + PALLINO('s-dafare qui', 7, 'la tappa di adesso') + PALLINO('s-dafare', 8, 'tappa da fare') +
+    PALLINO('s-fatta', 5, 'tappa finita') + '<div class="g-leg"><span class="m-park g-park">🛵</span><span>dove hai lasciato lo scooter</span></div>' +
+    '<p><b>Tocca la mappa</b> per vederla grande e spostarla con le dita.</p>'],
+  ['✉️ Com\'è andata?', '<p>Per ogni busta tocchi uno di questi 4 pulsanti. L\'app ti fa vedere <b>disegnato cosa scrivere</b> su blocco, busta e avviso.</p>' +
+    '<div class="g-esito consegnata">Consegnata al destinatario<small>firma sul blocco</small></div>' +
+    '<div class="g-esito terzi">Ritira un\'altra persona<small>firma + il suo cognome accanto</small></div>' +
+    '<div class="g-esito avviso">Avviso<small>non c\'è nessuno: lasci l\'avviso, la busta torna in borsa</small></div>' +
+    '<div class="g-esito sconosciuto">Sconosciuto<small>il cognome non c\'è da nessuna parte</small></div>'],
+  ['⏳ Di fretta? Portone chiuso?', '<div class="g-punto"><b>⏳ Segno dopo</b>Vai avanti e metti l\'esito quando hai tempo. In basso vedi quante buste mancano.</div>' +
+    '<div class="g-punto"><b>↪ Ci ripasso dopo</b>Il palazzo si sposta più avanti nel giro.</div>' +
+    '<div class="g-punto"><b>🔍 Cerca</b>Qualcuno ti chiama dal balcone? Cerca il cognome o il numero N.</div>' +
+    '<div class="g-punto"><b>🏁 A fine giro</b>Menu ☰ → Riepilogo → <b>Esporta</b>, e lo mandi su WhatsApp.</div>' +
+    '<p>Su ogni schermata il pulsante <b>?</b> ti ricorda cosa fare.</p>']
+];
+function apriGuida() { foglio = null; guida = 0; disegnaSopra(true); }
+function chiudiGuida() { guida = null; try { localStorage.setItem(CHIAVE_GUIDA, '1'); } catch (e) {} disegnaSopra(); }
+function htmlGuida(nuovo) {
+  const p = GUIDA[guida], ultima = guida === GUIDA.length - 1;
+  return '<div class="guida' + (nuovo ? ' g-nuova' : '') + '"><div class="g-su"><span class="g-num">' + (guida + 1) + ' di ' + GUIDA.length + '</span>' +
+    '<button class="g-salta" data-a="g-chiudi">Chiudi ✕</button></div>' +
+    '<div class="g-pag"><h2>' + p[0] + '</h2>' + p[1] + '</div>' +
+    '<div class="g-pallini">' + GUIDA.map((x, i) => '<i' + (i === guida ? ' class="on"' : '') + '></i>').join('') + '</div>' +
+    (ultima
+      ? '<button class="pieno" data-a="prova">🧪 Prova con un giro finto</button><div class="riga"><button class="neutro" data-a="g-prec">‹ Indietro</button><button class="neutro" data-a="g-chiudi">Ho capito</button></div>'
+      : '<div class="riga">' + (guida ? '<button class="neutro" data-a="g-prec">‹ Indietro</button>' : '') + '<button class="pieno" data-a="g-succ">Avanti ›</button></div>') +
+    '</div>';
+}
+/* giro di prova: nomi e codici inventati, file dentro l'app (prova.json); la data diventa quella di oggi */
+function caricaProva() {
+  foglio = null; guida = null; try { localStorage.setItem(CHIAVE_GUIDA, '1'); } catch (e) {}
+  disegnaSopra();
+  fetch('prova.json').then(r => r.ok ? r.json() : Promise.reject()).then(g => {
+    g.data = iso(new Date());
+    if (S.giro && S.giro.prova) inizia(g); else caricaTesto(JSON.stringify(g));
+  }).catch(() => toast('Non riesco ad aprire il giro di prova: apri l\'app una volta con internet'));
 }
 
 /* ================= mappa (offline) =================
@@ -850,7 +935,13 @@ function posticipa(modo) {
    Sopra si disegnano parcheggio, tappe e percorso presi dal file del giro, che resta sul telefono.
    Leaflet si carica solo la prima volta che si apre la mappa. */
 const $mappa = document.getElementById('mappa');
-const COL_TRATTI = ['#466EA0', '#0F8C8C', '#C2661B', '#6E7F2A'];
+const COL_TRATTI = ['#466EA0', '#0F8C8C', '#C2661B', '#6E7F2A'];   // solo per i pezzi nell'ordine del mazzo
+const COL_DOPO = '#5B8FD0', COL_FATTA = '#8A94A2';
+// legenda sempre visibile in fondo alla mappa (1.10)
+function legendaFissa() {
+  return '<div class="leg-fissa"><span><i class="m-linea ora"></i>adesso</span><span><i class="m-linea dopo"></i>dopo</span>' +
+    '<span><i class="m-linea fatta"></i>fatta</span><span><i class="m-linea tratt"></i>allo 🛵</span><em>© OpenStreetMap</em></div>';
+}
 let M = null;            // {map, rGiro, giro, frecce, nomi, strati, gps}
 let mappaPronta = null;  // promessa: Leaflet + dati della zona
 let selMappa = -1;       // tappa scelta sulla mappa (indice ti)
@@ -892,6 +983,8 @@ function statoTappa(ti) {
   return es.some(e => e) ? 'iniziata' : 'dafare';
 }
 
+// sulla mappa (1.10): "finita con avvisi" è verde come "finita" (un colore in meno da ricordare)
+function statoSemplice(ti) { const s = statoTappa(ti); return s === 'avvisi' ? 'fatta' : s; }
 function mostraMappa(nuova) {
   $mappa.hidden = false;
   spegniBussola(false);
@@ -1017,7 +1110,8 @@ function stradaDavanti(D, nomeVia) {
 /* che cosa mettere in alto sulla mappa piccola: {rot, tipo: 'portone'|'percorso'|'scooter', lato, metri, D, P} oppure null */
 function orientamento() {
   const v = M && M.daFare;
-  if (!v || v.cortile || !haCoord(v.to)) return null;
+  if (v && v.cortile) return {tipo: 'cortile'};
+  if (!v || !haCoord(v.to)) return null;
   const linea = v.linea, tot = lungo(linea), arrivo = puntoT(v.to);
   const m = Math.max(10, Math.round(tot / 10) * 10);
   if (v.prev < 0 || !haCoord(v.prev)) {   // si parte dallo scooter
@@ -1026,7 +1120,7 @@ function orientamento() {
     return {rot: direzione(pk, tot > 50 ? puntoLungo(linea, 50) : arrivo), tipo: 'scooter', metri: m};
   }
   const D = puntoT(v.prev);
-  if (metri(D, arrivo) < 8) return null;   // stesso portone
+  if (metri(D, arrivo) < 8) return {tipo: 'stesso'};   // stesso portone
   const t = tappe[v.prev];
   const s = t.interno ? null : stradaDavanti(D, t.via || viaCivico(t).via);
   if (!s) return {rot: direzione(D, tot > 50 ? puntoLungo(linea, 50) : arrivo), tipo: 'percorso', metri: m};
@@ -1081,33 +1175,38 @@ function nomiDritti(a) {   // i nomi delle vie seguono la strada ma non vanno ma
 function orientaMini() {
   const posto = document.getElementById('posto-mappa'), dir = document.getElementById('t-dir');
   if (!posto || !M) return;
-  const O = bussola ? null : orientamento();
+  // la direzione si calcola sempre (serve alla striscia grande); la mappa gira solo con "Mappa che gira" o con la bussola
+  const O = orientamento(), gira = O && O.rot != null && ruotaOn() && !bussola;
   const chiave = S.pos + ':' + (M.daFare ? M.daFare.to : '');
-  const on = !!bussola || !!O;
+  const on = !!bussola || !!gira;
   if (!on && posto.classList.contains('ruota')) nomiDritti(0);
   allargaMini(on);
   inquadraTappa();
-  if (O) {
-    ruotaMini(O.rot, chiave !== chiaveRot);
-    if (O.tipo === 'portone') {   // freccina sul marciapiede: da qui esci, guardando in alto
-      const c = [(O.D[0] + O.P[0] * 2) / 3, (O.D[1] + O.P[1] * 2) / 3];
-      L.marker(c, {interactive: false, keyboard: false, zIndexOffset: 700, icon: L.divIcon({className: 'm-freccia m-esci', iconSize: [26, 26],
-        html: '<svg viewBox="0 0 10 10" style="transform:rotate(' + (O.rot - 90).toFixed(0) + 'deg)"><path d="M1.5 1 L9 5 L1.5 9 L3.5 5 Z" fill="#2463EB" stroke="#fff" stroke-width="1"/></svg>'})}).addTo(M.giro);
-    }
-  } else if (!bussola) { posto.style.removeProperty('--contro'); const ago = document.getElementById('t-ago'); if (ago) ago.style.transform = ''; }
+  if (gira) ruotaMini(O.rot, chiave !== chiaveRot);
+  else if (!bussola) { posto.style.removeProperty('--contro'); const ago = document.getElementById('t-ago'); if (ago) ago.style.transform = ''; M.rot = 0; }
+  if (O && O.tipo === 'portone') {   // freccina sul marciapiede: da qui esci
+    const c = [(O.D[0] + O.P[0] * 2) / 3, (O.D[1] + O.P[1] * 2) / 3];
+    L.marker(c, {interactive: false, keyboard: false, zIndexOffset: 700, icon: L.divIcon({className: 'm-freccia m-esci', iconSize: [26, 26],
+      html: '<svg viewBox="0 0 10 10" style="transform:rotate(' + (O.rot - 90).toFixed(0) + 'deg)"><path d="M1.5 1 L9 5 L1.5 9 L3.5 5 Z" fill="#2463EB" stroke="#fff" stroke-width="1"/></svg>'})}).addTo(M.giro);
+  }
   chiaveRot = chiave;
   if (!dir) return;
+  // striscia grande (1.10): a parole, con la freccia grande
+  const riga = (fr, testo, sotto) => '<span class="fr">' + fr + '</span><span class="tx">' + testo + (sotto ? '<small>' + sotto + '</small>' : '') + '</span>';
+  const fin = O && O.metri ? 'fino alla prossima: ' + O.metri + ' m' : '';
   let h = '';
-  if (bussola) h = '🧭 La mappa gira con il telefono';
-  else if (O && O.tipo === 'portone') {
-    const L_ = {sinistra: ['←', 'a sinistra'], destra: ['→', 'a destra'], dritto: ['↑', 'attraversa']}[O.lato];
-    h = L_ ? '<span class="fr">' + L_[0] + '</span><span>Uscito dal portone: <b>' + L_[1] + '</b>' +
-        (O.attraversa ? ' e <b>attraversa</b>' : '') + ' · ' + O.metri + ' m</span>'
-      : '<span class="fr">↑</span><span>In alto la strada davanti al portone · ' + O.metri + ' m</span>';
-  } else if (O && O.tipo === 'scooter') h = '<span class="fr">🛵</span><span>Dallo scooter: la strada va <b>in alto</b></span>';
-  else if (O) h = '<span class="fr">↑</span><span>La strada da fare va <b>in alto</b> · ' + O.metri + ' m</span>';
+  if (O && O.tipo === 'portone') {
+    if (O.lato === 'destra') h = riga('→', 'Esci e vai a <b>DESTRA</b>', (O.attraversa ? 'poi attraversa · ' : '') + fin);
+    else if (O.lato === 'sinistra') h = riga('←', 'Esci e vai a <b>SINISTRA</b>', (O.attraversa ? 'poi attraversa · ' : '') + fin);
+    else if (O.lato === 'dritto') h = riga('↑', 'Esci e <b>ATTRAVERSA</b> la strada', fin);
+    else h = riga('〰', 'Segui la <b>linea blu</b> sulla mappa', fin);
+  } else if (O && O.tipo === 'scooter') h = riga('🛵', 'Parti dallo <b>scooter</b>', 'segui la linea blu · ' + O.metri + ' m');
+  else if (O && O.tipo === 'percorso') h = riga('〰', 'Segui la <b>linea blu</b> sulla mappa', fin);
+  else if (O && O.tipo === 'stesso') h = riga('🚪', 'È nello <b>stesso portone</b>', 'della tappa prima');
+  else if (O && O.tipo === 'cortile') h = riga('🏘', 'Sei nel <b>cortile</b>', 'segui i portoni 1, 2, 3 sulla mappa');
+  if (!h && S.pos === 0 && !tappaGestita(S.ordine[0])) h = riga('🛵', 'Si parte da qui', 'la prima tappa è vicino allo scooter');
+  if (bussola) h = riga('🧭', 'La mappa gira con il telefono', 'tocca di nuovo la bussola per fermarla');
   dir.innerHTML = h; dir.hidden = !h;
-  dir.classList.toggle('bus', !!bussola);
 }
 function accendiBussola() {
   if (bussola) { spegniBussola(true); return; }
@@ -1261,8 +1360,8 @@ function disegnaGiro() {
       if (cambio && ultimaDellaZona(prev)) {
         const zp = S.giro.zone[tappe[prev].zi] || {}, pkp = puntoPark(tappe[prev].zi);
         const lr = Array.isArray(zp.percorso_ritorno) && zp.percorso_ritorno.length >= 4 ? decodPercorso(zp.percorso_ritorno) : (pkp ? [puntoT(prev), pkp] : null);
-        if (lr) L.polyline(lr, {renderer: R, interactive: false, color: COL_TRATTI[Math.max(0, trattoDi(prev)) % COL_TRATTI.length],
-          lineCap: 'round', lineJoin: 'round', weight: 4, opacity: i <= att ? 0.3 : 0.75, dashArray: '8 9'}).addTo(g);
+        if (lr) L.polyline(lr, {renderer: R, interactive: false, color: i <= att ? COL_FATTA : COL_DOPO,
+          lineCap: 'round', lineJoin: 'round', weight: 4, opacity: i <= att ? 0.55 : 0.6, dashArray: '8 9'}).addTo(g);
       }
       const contigua = (i === 0 && primaDellaZona(ti)) || cambio || (prev === ti - 1 && tappe[prev].zi === t.zi);
       if (prev >= 0 && inC.has(ti) && inC.has(prev)) linea = [puntoT(prev), puntoT(ti)];   // dentro il cortile: dritto
@@ -1273,15 +1372,16 @@ function disegnaGiro() {
         linea = [da, puntoT(ti)]; dritta = true;
       }
     }
-    const tr = trattoDi(ti), col = COL_TRATTI[(tr < 0 ? 0 : tr) % COL_TRATTI.length];
     // la tappa di adesso è S.pos: la strada che ci arriva (i === S.pos) è quella da fare ora;
     // fino alla 1.5.2 era disegnata come "già fatta" (chiara) e la più marcata era quella dopo
     // (se la tappa di adesso è già tutta segnata, la strada da fare è quella verso la tappa dopo)
     const fatto = !ritorno && i < att, ora = !ritorno && i === att;
+    // 1.10: meno colori. Da fare adesso blu scuro (sotto), dopo azzurro, già fatta grigio, ritorno tratteggiato
+    const col = fatto ? COL_FATTA : COL_DOPO;
     const nelC = !ritorno && prev >= 0 && inC.has(ti) && inC.has(prev);
     if (ora) { daFare = {linea: linea, dritta: dritta, nelC: nelC, prev: cambio ? -1 : prev}; continue; }
     L.polyline(linea, {renderer: R, interactive: false, color: col, lineCap: 'round', lineJoin: 'round',
-      weight: nelC ? 3 : (fatto ? 4 : 5), opacity: fatto ? 0.3 : 0.75,
+      weight: nelC ? 3 : 4, opacity: fatto ? 0.55 : 0.6,
       dashArray: ritorno ? '8 9' : (dritta ? '2 9' : null)}).addTo(g);
     if (!fatto) freccia(linea, col);
   }
@@ -1311,7 +1411,7 @@ function disegnaGiro() {
     const qui = i === S.pos, sel = ti === selMappa, dim = qui ? 40 : 30;
     L.marker(puntoT(ti), {keyboard: false, zIndexOffset: qui ? 1000 : (sel ? 900 : 0),
       icon: L.divIcon({className: '', iconSize: [dim, dim],
-        html: '<div class="m-t s-' + statoTappa(ti) + (qui ? ' qui' : '') + (sel ? ' sel' : '') + '">' + (i + 1) + '</div>'})})
+        html: '<div class="m-t s-' + statoSemplice(ti) + (qui ? ' qui' : '') + (sel ? ' sel' : '') + '">' + (i + 1) + '</div>'})})
       .on('click', () => scegliTappa(ti, false)).addTo(g);
   });
 }
@@ -1358,22 +1458,22 @@ function schedaMappa() {
     '<b>' + esc(t.indirizzo) + '</b></div>' +
     '<button class="freccia" data-a="m-succ" aria-label="Tappa dopo"' + (i >= S.ordine.length - 1 ? ' disabled' : '') + '>›</button></div>' +
     '<div class="m-sotto">' + (q === 1 ? '1 lettera' : q + ' lettere') + ' · N ' + t.buste.map(b => b.n).join(', ') +
-    ' · <b>' + f + '/' + q + ' fatte</b>' + (st === 'rimandata' ? ' · <span class="etichetta">rimandata</span>' : '') +
+    ' · <b>' + f + '/' + q + ' fatte</b>' + (st === 'rimandata' ? ' · <span class="etichetta">ci ripasso</span>' : '') +
     (haCoord(ti) ? '' : ' · <i>senza posizione sulla mappa</i>') + '</div>' +
     '<button class="pieno" data-a="m-vai">' + (i === S.pos ? 'Torna alla tappa' : 'Vai a questa tappa ›') + '</button>';
 }
 function legendaMappa() {
-  const tr = S.giro.tratti || [];
-  return '<b>Le tappe</b>' +
-    '<div class="m-leg"><span class="m-t s-dafare qui">7</span> sei qui</div>' +
+  return '<b>Le tappe</b> <small>(il numero è l\'ordine del giro)</small>' +
+    '<div class="m-leg"><span class="m-t s-dafare qui">7</span> la tappa di adesso</div>' +
     '<div class="m-leg"><span class="m-t s-dafare">8</span> da fare</div>' +
     '<div class="m-leg"><span class="m-t s-fatta">5</span> finita</div>' +
-    '<div class="m-leg"><span class="m-t s-avvisi">6</span> finita, con avvisi o sconosciuti</div>' +
-    '<div class="m-leg"><span class="m-t s-dasegnare">4</span> da segnare</div>' +
-    '<div class="m-leg"><span class="m-t s-rimandata">9</span> rimandata</div>' +
-    '<b>Il percorso</b>' +
-    (tr.length ? tr.map((x, k) => '<div class="m-leg"><i class="m-linea" style="background:' + COL_TRATTI[k % COL_TRATTI.length] + '"></i> tratto ' + (k + 1) + ': ' + esc(testoTratto(k)) + '</div>').join('') : '') +
-    '<div class="m-leg"><i class="m-linea chiara"></i> già fatto</div>' +
+    '<div class="m-leg"><span class="m-t s-dasegnare">4</span> buste da segnare dopo</div>' +
+    '<div class="m-leg"><span class="m-t s-rimandata">9</span> ci ripasso dopo</div>' +
+    '<div class="m-leg"><span class="m-park g-park">🛵</span> lo scooter</div>' +
+    '<b>La strada</b>' +
+    '<div class="m-leg"><i class="m-linea ora"></i> da fare adesso</div>' +
+    '<div class="m-leg"><i class="m-linea dopo"></i> le tappe dopo</div>' +
+    '<div class="m-leg"><i class="m-linea fatta"></i> già fatta</div>' +
     '<div class="m-leg"><i class="m-linea tratt"></i> ritorno allo scooter</div>' +
     '<button class="neutro" data-a="m-legenda">Chiudi</button>';
 }
@@ -1814,6 +1914,14 @@ const AZIONI = {
     if (box.hidden) { box.innerHTML = legendaMappa(); box.hidden = false; } else box.hidden = true;
   },
   aggiorna() { if (swInAttesa) swInAttesa.postMessage('AGGIORNA'); },
+  aiuto(el) { apriFoglio({tipo: 'aiuto', k: el.dataset.k}); },
+  guida() { apriGuida(); },
+  'g-succ'() { if (guida < GUIDA.length - 1) { guida++; disegnaSopra(true); } },
+  'g-prec'() { if (guida > 0) { guida--; disegnaSopra(true); } },
+  'g-chiudi'() { chiudiGuida(); },
+  prova() { caricaProva(); },
+  semplice() { spegniBussola(false); S.semplice = !semplice(); foglio = null; salva(); chiaveRot = ''; disegna(); toast(semplice() ? 'Modalità semplice' : 'Modalità completa: ci sono anche bussola e ordine del mazzo'); },
+  ruota() { S.ruota = !ruotaOn(); salva(); chiaveRot = ''; disegnaSopra(); if (vista().s === 'tappa') orientaMini(); },
   archivio() { foglio = null; AV.aperto = true; AV.sel = null; salvaAV(); disegna(); },
   'a-esci'() { esciArchivio(); },
   'a-giorno'(el) { AV.g = +el.dataset.g; AV.sel = null; salvaAV(); aChips(); aScheda(); if (AM) { aDisegna(); aInquadra(true); } },
@@ -1893,7 +2001,7 @@ try {
   if (salvato && typeof salvato === 'object') S = salvato;
 } catch (e) {}
 if (S.giro) {
-  if (controlla(S.giro)) S = {giro: null, anim: S.anim};
+  if (controlla(S.giro)) S = Object.assign(preferenze(), {giro: null});
   else {
     indicizza();
     S.esiti = S.esiti || {}; S.rimandate = S.rimandate || []; S.pila = S.pila || [];
@@ -1910,6 +2018,7 @@ try {
     if (v) { AV.aperto = !!v.aperto; AV.g = (v.g | 0) < A.giorni.length ? (v.g | 0) : -1; AV.modo = v.modo === 'esito' ? 'esito' : 'giorno'; }
   }
 } catch (e) {}
+try { if (!S.giro && !(AV.aperto && A) && !localStorage.getItem(CHIAVE_GUIDA)) guida = 0; } catch (e) {}   // prima volta: la guida
 disegna();
 avviaSW();
 prendiCondiviso();
