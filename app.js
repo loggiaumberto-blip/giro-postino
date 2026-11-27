@@ -4,7 +4,7 @@
 'use strict';
 
 const CHIAVE = 'giro_postino_v1';
-const VERSIONE_APP = '1.8';
+const VERSIONE_APP = '1.9';
 const NOMI = {consegnata: 'CONSEGNATA', terzi: 'A TERZI', avviso: 'AVVISO', sconosciuto: 'SCONOSCIUTO', da_segnare: 'DA SEGNARE'};
 const FINALI = ['consegnata', 'terzi', 'avviso', 'sconosciuto'];
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -83,6 +83,10 @@ function caricaTesto(testo) {
   let g;
   try { g = JSON.parse(String(testo).replace(/^﻿/, '')); }
   catch (e) { return rifiuta('Non riesco a leggere il file: non è un file del giro (.json).'); }
+  if (g && g.formato === 'archivio') {   // archivio di tutti i giri: non tocca il giro in corso
+    const ea = controllaArchivio(g);
+    return ea ? rifiuta(ea) : caricaArchivio(g);
+  }
   const err = controlla(g);
   if (err) return rifiuta(err);
   const inCorso = S.giro && !S.esportato && Object.keys(S.esiti || {}).length > 0;
@@ -238,6 +242,7 @@ function indietro() {
   if (occupato) return true;
   if (gigante != null) { gigante = null; disegnaSopra(); return true; }
   if (foglio) { chiudiFoglio(); return true; }
+  if (AV.aperto && A) { indietroArchivio(); return true; }
   if (S.giro && S.pila.length) { S.pila.pop(); salva(); disegna(); return true; }
   return false;
 }
@@ -253,6 +258,8 @@ window.addEventListener('popstate', () => {
 function disegna() {
   document.body.classList.toggle('anim', animOn());
   riportaCarta();   // la mappa torna al suo posto prima di ridisegnare la pagina
+  if (AV.aperto && A) { mostraArchivio(); disegnaSopra(); return; }
+  if (!$arch.hidden) $arch.hidden = true;
   let h, chiave;
   const v = vista();
   if (!S.giro) chiave = 'inizio';
@@ -307,6 +314,7 @@ function pagInizio() {
   return '<div class="inizio"><img src="icon-192.png" alt=""><h1>Giro Postino</h1>' +
     (erroreInizio ? '<p class="errore">' + esc(erroreInizio) + '</p>' : '') +
     '<button class="pieno" data-a="carica">Carica giro</button>' +
+    (A ? '<button class="neutro" data-a="archivio">🗂 Archivio di tutti i giri</button>' : '') +
     '<p>Apri il file del giro da WhatsApp e tocca<br><b>Condividi → Giro Postino</b>.</p>' +
     '<p>Oppure tocca “Carica giro” e scegli il file <b>giro_….json</b>.</p></div>';
 }
@@ -668,6 +676,7 @@ function corpoFoglio(f) {
   }
   if (f.tipo === 'menu') return '<h2>Menu</h2>' +
     '<button class="neutro" data-a="mappa">🗺 Mappa del giro</button>' +
+    (A ? '<button class="neutro" data-a="archivio">🗂 Archivio di tutti i giri</button>' : '') +
     '<button class="neutro" data-a="tappe">Tutte le tappe</button>' +
     '<button class="neutro" data-a="mazzo">📦 Ordine del mazzo</button>' +
     '<button class="neutro" data-a="riepilogo">Riepilogo ed esporta</button>' +
@@ -1431,6 +1440,267 @@ async function esporta() {
   fatto();
 }
 
+/* ================= Archivio: tutti i giri insieme (versione 1.9, 27/11) =================
+   Un file "archivio_giri.json" (formato "archivio") con tutti i giorni, le tappe, la strada fatta
+   e l'esito di ogni busta. Si cerca una busta e si vede su un'unica mappa tutto il lavoro fatto.
+   Sta in una chiave a parte: non tocca il giro caricato. */
+const CHIAVE_ARCH = 'giro_postino_archivio';
+const $arch = document.getElementById('archivio');
+const COL_GIORNI = ['#466EA0', '#0F8C8C', '#C2661B', '#6E7F2A', '#B0417A', '#2F8F5B', '#8A5A2B', '#D04A35', '#3E7CC2', '#9A7B00'];
+const COL_ESITI = {consegnata: '#0E8A45', terzi: '#2463EB', avviso: '#F5A524', sconosciuto: '#DC2F3C', '': '#9AA3AE'};
+let A = null;                                                   // dati dell'archivio
+let AV = {aperto: false, g: -1, modo: 'giorno', q: '', sel: null};   // g = giorno scelto (-1 = tutti); sel = {gi, ti, i}
+let AM = null;                                                  // mappa dell'archivio
+let aTutte = [], aBuste = [];
+
+function controllaArchivio(g) {
+  const ok = g && g.formato === 'archivio' && Array.isArray(g.giorni) && g.giorni.length &&
+    g.giorni.every(d => d && typeof d.data === 'string' && Array.isArray(d.zone) && Array.isArray(d.tappe) &&
+      d.tappe.every(t => t && typeof t.lat === 'number' && typeof t.lon === 'number' && Array.isArray(t.b)));
+  return ok ? '' : 'Il file dell\'archivio è rovinato.';
+}
+const normA = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+function indicizzaArch() {
+  aTutte = []; aBuste = [];
+  A.giorni.forEach((d, gi) => d.tappe.forEach((t, ti) => {
+    aTutte.push({gi: gi, ti: ti, t: t, d: d});
+    t.b.forEach(b => aBuste.push({i: aBuste.length, gi: gi, ti: ti, t: t, d: d, b: b,
+      s: ' ' + normA(b.d + ' ' + t.via + ' ' + (b.civ || t.civ) + ' ' + (b.r || '')) + ' '}));
+  }));
+}
+function salvaAV() { try { localStorage.setItem(CHIAVE_ARCH + '_vista', JSON.stringify({aperto: AV.aperto, g: AV.g, modo: AV.modo})); } catch (e) {} }
+function caricaArchivio(g) {
+  A = g; indicizzaArch();
+  try { localStorage.setItem(CHIAVE_ARCH, JSON.stringify(g)); } catch (e) { toast('⚠ Non riesco a salvare l\'archivio sul telefono'); }
+  foglio = null; erroreInizio = '';
+  AV = {aperto: true, g: -1, modo: 'giorno', q: '', sel: null};
+  if (AM) { AM.cache = {}; AM.primo = true; }
+  salvaAV(); disegna();
+  toast('Archivio caricato: ' + A.giorni.length + ' giri, ' + aBuste.length + ' buste');
+}
+const aVis = x => AV.g < 0 || x.gi === AV.g;
+const etichettaG = d => GIORNI[daIso(d.data).getDay()].slice(0, 3) + ' ' + d.data.slice(8) + '/' + d.data.slice(5, 7);
+const giornoCorto = dt => GIORNI[dt.getDay()].slice(0, 3) + ' ' + due(dt.getDate()) + '/' + due(dt.getMonth() + 1);
+const indirizzoA = (t, b) => t.via + ' ' + ((b && b.civ) || t.civ) + (t.int && !(b && b.civ) ? ' – int ' + t.int : '');
+const timbroA = e => '<span class="a-timbro e-' + (e || 'no') + '">' + (e ? NOMI[e] : 'senza esito') + '</span>';
+
+function mostraArchivio() {
+  $app.hidden = true; $app.classList.remove('vista-tappa'); nascondiMappa();
+  document.documentElement.classList.add('fisso');
+  if (bussola) spegniBussola(false);
+  ultimaVista = '';
+  if ($arch.hidden) {
+    $arch.hidden = false;
+    document.getElementById('aq').value = AV.q;
+    aChips(); aScheda();
+  }
+  aPrepMappa();
+}
+function esciArchivio() {
+  AV.aperto = false; AV.sel = null; salvaAV();
+  const c = document.activeElement; if (c && c.blur) c.blur();
+  disegna();
+}
+function indietroArchivio() {
+  if (AV.sel) { AV.sel = null; aScheda(); aDisegna(); }
+  else if (AV.q) { AV.q = ''; document.getElementById('aq').value = ''; aScheda(); }
+  else esciArchivio();
+}
+
+function aChips() {
+  const p = A.giorni[0].data, u = A.giorni[A.giorni.length - 1].data;
+  document.getElementById('a-tit').textContent = 'Archivio ' + p.slice(8) + '/' + p.slice(5, 7) + ' – ' + u.slice(8) + '/' + u.slice(5, 7);
+  const box = document.getElementById('a-giorni');
+  box.innerHTML = '<button class="a-chip' + (AV.g < 0 ? ' on' : '') + '" data-a="a-giorno" data-g="-1">Tutti</button>' +
+    A.giorni.map((d, gi) => '<button class="a-chip' + (AV.g === gi ? ' on' : '') + '" data-a="a-giorno" data-g="' + gi +
+      '" style="--c:' + COL_GIORNI[gi % COL_GIORNI.length] + '"><i></i>' + etichettaG(d) + '</button>').join('');
+  const on = box.querySelector('.on'); if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  document.querySelectorAll('.a-modo button').forEach(b => b.classList.toggle('on', b.dataset.m === AV.modo));
+}
+function aScheda() {
+  const el = document.getElementById('a-scheda');
+  el.innerHTML = AV.sel ? aSchedaPosto() : (normA(AV.q) ? aRisultati() : aRiassunto());
+  el.scrollTop = 0;
+  const s = el.querySelector('.a-busta.sel'); if (s && s.scrollIntoView) s.scrollIntoView({block: 'nearest'});
+}
+function aRiassunto() {
+  const vis = aBuste.filter(aVis), c = {consegnata: 0, terzi: 0, avviso: 0, sconosciuto: 0, '': 0};
+  vis.forEach(x => { c[x.b.e || '']++; });
+  const giorni = A.giorni.filter((d, gi) => AV.g < 0 || gi === AV.g);
+  const km = giorni.reduce((s, d) => s + (d.km || 0), 0);
+  const tit = AV.g < 0 ? 'Tutti i giri · ' + A.giorni.length + ' giorni' : etichettaG(giorni[0]) + ' · affido ' + esc(giorni[0].affido);
+  const voce = (e, nome) => c[e] ? '<span class="a-c"><i style="--c:' + COL_ESITI[e] + '"></i>' + nome + ' <b>' + c[e] + '</b></span>' : '';
+  const senza = giorni.filter(d => !d.esiti).map(etichettaG);
+  return '<div class="a-ria"><b>' + tit + '</b><div>' + vis.length + ' buste · ' + aTutte.filter(aVis).length + ' tappe' +
+    (km ? ' · circa ' + km.toFixed(km >= 10 ? 0 : 1).replace('.', ',') + ' km a piedi' : '') + '</div>' +
+    '<div class="a-conti">' + voce('consegnata', 'consegnate') + voce('terzi', 'a terzi') + voce('avviso', 'avvisi') +
+      voce('sconosciuto', 'sconosciuti') + voce('', 'senza esito') + '</div>' +
+    (senza.length ? '<p class="a-aiuto">Esiti non disponibili per ' + senza.join(', ') + ' (manca il riepilogo).</p>' : '') +
+    '<p class="a-aiuto">Tocca un punto sulla mappa per vedere le sue buste, oppure cerca qui sopra.</p></div>';
+}
+function aCerca(q) {
+  const vis = aBuste.filter(aVis);
+  const m = /^N ?(\d+)$/.exec(q); if (m) q = m[1];
+  if (/^\d+$/.test(q)) return q.length <= 3 ? vis.filter(x => String(x.b.n) === q) : vis.filter(x => String(x.b.c).endsWith(q));
+  const parole = q.split(' ');
+  return vis.filter(x => parole.every(p => x.s.indexOf(p) >= 0));
+}
+function aRiga(x) {
+  return '<button class="a-riga" data-a="a-busta" data-i="' + x.i + '"><span class="n">' + x.b.n + '</span>' +
+    '<span class="chi"><span class="nome">' + nomeHtml(x.b.d) + '</span>' +
+    '<span class="dove"><i style="--c:' + COL_GIORNI[x.gi % COL_GIORNI.length] + '"></i>' + etichettaG(x.d) + ' · ' + esc(indirizzoA(x.t, x.b)) + '</span></span>' +
+    timbroA(x.b.e) + '</button>';
+}
+function aRisultati() {
+  const l = aCerca(normA(AV.q)), MAX = 80;
+  if (!l.length) return '<p class="a-aiuto">Nessuna busta trovata' + (AV.g >= 0 ? ' in questo giorno: prova con “Tutti”.' : '.') + '</p>';
+  return '<div class="a-nris">' + (l.length === 1 ? '1 busta trovata' : l.length + ' buste trovate') + (AV.g >= 0 ? ' (solo ' + etichettaG(A.giorni[AV.g]) + ')' : '') + '</div>' +
+    l.slice(0, MAX).map(aRiga).join('') +
+    (l.length > MAX ? '<p class="a-aiuto">… e altre ' + (l.length - MAX) + ': scrivi qualcosa in più.</p>' : '');
+}
+function aDettaglio(b, x, sel) {
+  const e = b.e || '', ora = b.o ? ' alle ' + esc(b.o) : '';
+  let r;
+  if (!x.d.esiti) r = 'Esito non disponibile: manca il riepilogo di questo giorno.';
+  else if (e === 'consegnata') r = 'Consegnata al destinatario' + ora;
+  else if (e === 'terzi') r = 'Ritirata da <b>' + esc(b.r || '?') + '</b>' + ora;
+  else if (e === 'avviso') {
+    const da = b.da || x.d.data;
+    r = 'Avviso lasciato ' + giornoCorto(daIso(da)) + ora + '<br>Ritiro all\'edicola dal <b>' + giornoCorto(giornoRitiro(da, 2)) + ' ore 11</b> · giacenza fino al 19/12';
+  } else if (e === 'sconosciuto') r = 'Destinatario sconosciuto' + ora + ' · tornata all\'Ufficio Elettorale';
+  else r = 'Senza esito';
+  return '<div class="a-busta e-' + (e || 'no') + (sel ? ' sel' : '') + '"><div class="a-bt"><span class="n">' + b.n + '</span>' +
+    '<span class="nome">' + nomeHtml(b.d) + '</span>' + timbroA(e) + '</div>' +
+    '<div class="a-es">' + r + '</div>' +
+    '<div class="a-cod">cod. ' + esc(b.c) + (b.civ ? ' · ' + esc(b.civ) : '') + (b.na ? ' · 📝 ' + esc(b.na) : '') + '</div></div>';
+}
+function aSchedaPosto() {
+  const s = AV.sel, t0 = A.giorni[s.gi].tappe[s.ti], p0 = [t0.lat, t0.lon];
+  // tutte le tappe nello stesso punto (anche di altri giorni, se si guardano tutti)
+  const qui = aTutte.filter(x => aVis(x) && metri(p0, [x.t.lat, x.t.lon]) < 12)
+    .sort((a, b) => a.gi - b.gi || a.ti - b.ti);
+  const nb = qui.reduce((k, x) => k + x.t.b.length, 0);
+  let h = '<div class="barra a-bar">' + (normA(AV.q) ? '<button class="neutro" data-a="a-ris">‹ Risultati</button>' : '<button class="neutro" data-a="a-chiudisel">✕</button>') +
+    '<div class="titolo-pag">' + esc(t0.via + ' ' + t0.civ) + '<small>' + (nb === 1 ? '1 busta' : nb + ' buste') + (qui.length > 1 ? ' · ' + qui.length + ' passaggi' : '') + '</small></div></div>';
+  qui.forEach(x => {
+    h += '<div class="a-gr"><span class="a-gg" style="--c:' + COL_GIORNI[x.gi % COL_GIORNI.length] + '">' + etichettaG(x.d) + '</span>' +
+      esc(indirizzoA(x.t)) + ' · tappa ' + (x.ti + 1) + '</div>' +
+      x.t.b.map(b => aDettaglio(b, x, s.i >= 0 && aBuste[s.i].b === b)).join('');
+  });
+  return h;
+}
+
+/* --- mappa dell'archivio: la stessa mappa offline, in un riquadro suo --- */
+function conAM(f) { const m = M; M = AM; try { return f(); } finally { M = m; } }   // disegnaBase e zoomMappa lavorano su M
+function aPrepMappa() {
+  preparaMappa().then(zona => {
+    if (!AV.aperto || $arch.hidden) return;
+    if (!AM) aCreaMappa(zona);
+    AM.map.invalidateSize();
+    aDisegna();
+    if (AM.primo) { AM.primo = false; aInquadra(false); }
+  }, () => {
+    document.getElementById('a-carta').innerHTML = '<p class="m-errore">Non riesco ad aprire la mappa. Se è la prima volta, apri l\'app una volta con internet.</p>';
+  });
+}
+function aCreaMappa(zona) {
+  let lim = L.latLngBounds(aTutte.map(x => [x.t.lat, x.t.lon]));
+  if (zona && zona.box) lim = lim.extend([[zona.box[0], zona.box[1]], [zona.box[2], zona.box[3]]]);
+  const map = L.map('a-carta', {zoomControl: false, minZoom: 13, maxZoom: 20, zoomSnap: 0.5,
+    maxBounds: lim.pad(0.2), maxBoundsViscosity: 0.8, fadeAnimation: false, markerZoomAnimation: animOn(), zoomAnimation: animOn()});
+  map.attributionControl.setPrefix(false).addAttribution('© OpenStreetMap');
+  map.setView(lim.getCenter(), 15);
+  AM = {map: map, strati: null, zona: zona, frecce: L.layerGroup(), nomi: L.layerGroup(), cache: {}, primo: true};
+  if (zona) conAM(() => disegnaBase(zona));
+  AM.RL = L.canvas({padding: 0.4}); AM.RP = L.canvas({padding: 0.4}); AM.RS = L.canvas({padding: 0.4});
+  AM.linee = L.layerGroup().addTo(map); AM.punti = L.layerGroup().addTo(map); AM.sopra = L.layerGroup().addTo(map);
+  map.on('zoomend', () => { conAM(zoomMappa); aDisegnaPunti(); });
+  map.on('click', aTocco);
+  conAM(zoomMappa);
+}
+function aLineeGiorno(d) {   // strade fatte a piedi, tratti dritti (senza percorso) e ritorni allo scooter
+  const s = [], dr = [], r = [];
+  d.tappe.forEach((t, ti) => {
+    const prev = ti > 0 ? d.tappe[ti - 1] : null, z = d.zone[t.z] || {};
+    if (Array.isArray(t.p) && t.p.length >= 4) s.push(decodPercorso(t.p));
+    else {
+      const da = (!prev || prev.z !== t.z) ? z.parcheggio : [prev.lat, prev.lon];
+      if (da) dr.push([da, [t.lat, t.lon]]);
+    }
+    const next = d.tappe[ti + 1];
+    if (!next || next.z !== t.z) {
+      if (Array.isArray(z.ritorno) && z.ritorno.length >= 4) r.push(decodPercorso(z.ritorno));
+      else if (z.parcheggio) r.push([[t.lat, t.lon], z.parcheggio]);
+    }
+  });
+  return {s: s, dr: dr, r: r};
+}
+function aDisegna() {
+  if (!AM) return;
+  aDisegnaLinee(); aDisegnaPunti(); aDisegnaSel();
+}
+function aDisegnaLinee() {
+  AM.linee.clearLayers();
+  const selG = AV.sel ? AV.sel.gi : -1, esiti = AV.modo === 'esito';
+  const ordine = A.giorni.map((d, gi) => gi).filter(gi => AV.g < 0 || gi === AV.g);
+  if (selG >= 0 && ordine.indexOf(selG) >= 0) { ordine.splice(ordine.indexOf(selG), 1); ordine.push(selG); }   // il giorno scelto sopra gli altri
+  ordine.forEach(gi => {
+    const d = A.giorni[gi], l = AM.cache[gi] || (AM.cache[gi] = aLineeGiorno(d));
+    const forte = selG === gi || AV.g === gi;
+    const col = esiti && !forte ? '#7D8794' : COL_GIORNI[gi % COL_GIORNI.length];
+    const o = {renderer: AM.RL, interactive: false, color: col, lineCap: 'round', lineJoin: 'round',
+      weight: forte ? 5 : 3, opacity: forte ? 0.85 : (selG >= 0 ? 0.22 : (esiti ? 0.4 : 0.6))};
+    if (l.s.length) L.polyline(l.s, o).addTo(AM.linee);
+    if (l.dr.length) L.polyline(l.dr, Object.assign({}, o, {dashArray: '2 8'})).addTo(AM.linee);
+    if (l.r.length) L.polyline(l.r, Object.assign({}, o, {dashArray: '7 8'})).addTo(AM.linee);
+    d.zone.forEach(z => {
+      if (z.parcheggio) L.marker(z.parcheggio, {interactive: false, keyboard: false,
+        icon: L.divIcon({className: 'a-scooter', iconSize: [26, 26], html: '<span style="--c:' + COL_GIORNI[gi % COL_GIORNI.length] + '">🛵</span>'})}).addTo(AM.linee);
+    });
+  });
+}
+function aDisegnaPunti() {
+  AM.punti.clearLayers();
+  const z = AM.map.getZoom(), r = Math.max(3, Math.min(9, 5 * Math.pow(2, (z - 16) / 1.5)));
+  const pallino = (ll, col, rr) => L.circleMarker(ll, {renderer: AM.RP, interactive: false, radius: rr, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: 1}).addTo(AM.punti);
+  aTutte.forEach(x => {
+    if (!aVis(x)) return;
+    const ll = [x.t.lat, x.t.lon], bb = x.t.b;
+    if (AV.modo !== 'esito') return pallino(ll, COL_GIORNI[x.gi % COL_GIORNI.length], r);
+    if (bb.length === 1) return pallino(ll, COL_ESITI[bb[0].e || ''], r);
+    // più buste nello stesso palazzo: un pallino per busta, in cerchio intorno al civico
+    const c = AM.map.latLngToLayerPoint(ll), giro = r * Math.max(1.1, bb.length * 0.38);
+    bb.forEach((b, k) => {
+      const a = 2 * Math.PI * k / bb.length - Math.PI / 2;
+      pallino(AM.map.layerPointToLatLng([c.x + Math.cos(a) * giro, c.y + Math.sin(a) * giro]), COL_ESITI[b.e || ''], r * 0.85);
+    });
+  });
+}
+function aDisegnaSel() {
+  AM.sopra.clearLayers();
+  if (!AV.sel) return;
+  const t = A.giorni[AV.sel.gi].tappe[AV.sel.ti];
+  L.circleMarker([t.lat, t.lon], {renderer: AM.RS, interactive: false, radius: 17, color: '#fff', weight: 7, fill: false}).addTo(AM.sopra);
+  L.circleMarker([t.lat, t.lon], {renderer: AM.RS, interactive: false, radius: 17, color: '#23344D', weight: 3.5, fill: false}).addTo(AM.sopra);
+}
+function aInquadra(anima) {
+  const pts = aTutte.filter(aVis).map(x => [x.t.lat, x.t.lon]);
+  A.giorni.forEach((d, gi) => { if (AV.g < 0 || gi === AV.g) d.zone.forEach(z => { if (z.parcheggio) pts.push(z.parcheggio); }); });
+  if (pts.length) AM.map.fitBounds(pts, {padding: [20, 20], animate: !!anima && animOn()});
+}
+function aTocco(ev) {
+  const p = ev.containerPoint; let best = null, bd = 26;
+  aTutte.forEach(x => {
+    if (!aVis(x)) return;
+    const q = AM.map.latLngToContainerPoint([x.t.lat, x.t.lon]), d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d < bd) { bd = d; best = x; }
+  });
+  const c = document.activeElement; if (c && c.id === 'aq') c.blur();
+  if (!best) { if (AV.sel) { AV.sel = null; aScheda(); aDisegna(); } return; }
+  AV.sel = {gi: best.gi, ti: best.ti, i: -1};
+  aScheda(); aDisegna();
+}
+
 /* ================= tocchi ================= */
 const AZIONI = {
   carica() { foglio = null; disegnaSopra(); $file.value = ''; $file.click(); },
@@ -1543,7 +1813,21 @@ const AZIONI = {
     const box = document.getElementById('m-legenda');
     if (box.hidden) { box.innerHTML = legendaMappa(); box.hidden = false; } else box.hidden = true;
   },
-  aggiorna() { if (swInAttesa) swInAttesa.postMessage('AGGIORNA'); }
+  aggiorna() { if (swInAttesa) swInAttesa.postMessage('AGGIORNA'); },
+  archivio() { foglio = null; AV.aperto = true; AV.sel = null; salvaAV(); disegna(); },
+  'a-esci'() { esciArchivio(); },
+  'a-giorno'(el) { AV.g = +el.dataset.g; AV.sel = null; salvaAV(); aChips(); aScheda(); if (AM) { aDisegna(); aInquadra(true); } },
+  'a-modo'(el) { AV.modo = el.dataset.m === 'esito' ? 'esito' : 'giorno'; salvaAV(); aChips(); aDisegna(); },
+  'a-tutto'() { if (AM) aInquadra(true); },
+  'a-busta'(el) {
+    const x = aBuste[+el.dataset.i]; if (!x) return;
+    const c = document.activeElement; if (c && c.blur) c.blur();
+    AV.sel = {gi: x.gi, ti: x.ti, i: x.i};
+    aScheda();
+    if (AM) { aDisegna(); AM.map.setView([x.t.lat, x.t.lon], Math.max(AM.map.getZoom(), 18), {animate: animOn()}); }
+  },
+  'a-ris'() { AV.sel = null; aScheda(); aDisegna(); },
+  'a-chiudisel'() { AV.sel = null; aScheda(); aDisegna(); }
 };
 
 document.addEventListener('click', ev => {
@@ -1554,6 +1838,7 @@ document.addEventListener('click', ev => {
 });
 document.addEventListener('input', ev => {
   if (ev.target.id === 'q') risultati();
+  if (ev.target.id === 'aq') { AV.q = ev.target.value; AV.sel = null; aScheda(); aDisegna(); }
   if (ev.target.id === 'cognome') {   // il cognome compare dal vivo sulla riga del blocco disegnata
     cognomeTerzi = ev.target.value.trim().toUpperCase();
     document.querySelectorAll('.cg-live').forEach(el => { el.innerHTML = cognomeHtml(); });
@@ -1562,6 +1847,7 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Enter' && ev.target.id === 'cognome') { ev.preventDefault(); AZIONI['ok-terzi'](); }
+  if (ev.key === 'Enter' && ev.target.id === 'aq') { ev.preventDefault(); ev.target.blur(); }
 });
 $file.addEventListener('change', () => {
   const f = $file.files && $file.files[0]; if (!f) return;
@@ -1616,6 +1902,14 @@ if (S.giro) {
     S.pila = S.pila.filter(v => v && (v.s !== 'busta' || perN[v.n]));
   }
 }
+try {
+  const a = JSON.parse(localStorage.getItem(CHIAVE_ARCH) || 'null');
+  if (a && !controllaArchivio(a)) {
+    A = a; indicizzaArch();
+    const v = JSON.parse(localStorage.getItem(CHIAVE_ARCH + '_vista') || 'null');
+    if (v) { AV.aperto = !!v.aperto; AV.g = (v.g | 0) < A.giorni.length ? (v.g | 0) : -1; AV.modo = v.modo === 'esito' ? 'esito' : 'giorno'; }
+  }
+} catch (e) {}
 disegna();
 avviaSW();
 prendiCondiviso();
